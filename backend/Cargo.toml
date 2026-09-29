@@ -1,0 +1,63 @@
+# One package, two binaries: `api` (HTTP server) and `worker` (background jobs).
+# Everything backend lives in src/ as plain modules — no internal crates.
+[package]
+name = "backend"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+
+[dependencies]
+# --- async runtime ---
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "signal", "fs"] }
+
+# --- HTTP server ---
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "limit"] }
+futures = "0.3"
+
+# --- PostgreSQL: plain driver + a small connection pool (no ORM) ---
+tokio-postgres = "0.7"
+deadpool-postgres = "0.14"
+postgres-types = "0.2"
+
+# --- HTTP client for Panta / Solana ---
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip"] }
+
+# --- Solana SDK + RPC client ---
+solana-sdk = "2.2"
+solana-client = "2.2"
+# solana-client (via reqwest) wants OpenSSL; build it from source so no system
+# OpenSSL install is required on dev machines or CI.
+openssl = { version = "0.10", features = ["vendored"] }
+
+# --- serialization / ids / time ---
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde", "clock"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+ts-rs = { version = "10", features = ["chrono-impl", "serde-json-impl", "uuid-impl"] }
+
+# --- errors / logging / misc ---
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+jsonwebtoken = "9"
+ed25519-dalek = "2"
+bs58 = "0.5"
+base64 = "0.22"
+
+# Binaries: `cargo run --bin api` / `cargo run --bin worker`
+[[bin]]
+name = "api"
+path = "src/bin/api.rs"
+
+[[bin]]
+name = "worker"
+path = "src/bin/worker.rs"
+
+[lib]
+name = "backend"
+path = "src/lib.rs"
