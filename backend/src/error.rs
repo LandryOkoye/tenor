@@ -2,12 +2,12 @@
 //! Serializes as `{ "error": { "code": "...", "message": "...", "details": ... } }`
 //! so the frontend can switch on `code` (brief §9).
 
+use crate::domain::ApiError;
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
-use crate::domain::ApiError;
 
 /// Application error with a stable machine-readable `code`.
 #[derive(Debug, thiserror::Error)]

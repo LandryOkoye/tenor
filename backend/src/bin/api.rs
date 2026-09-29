@@ -1,31 +1,64 @@
 //! HTTP API binary. Run with `cargo run --bin api`.
 //!
-//! Wires together: config -> db pool + migrations -> router -> serve.
+//! Startup order: config -> db pool -> migrations -> router (with CORS) -> serve.
 
-use axum::{routing::get, Json, Router};
+use std::sync::Arc;
+
+use axum::http::{header, HeaderValue, Method};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
+
+use backend::config::Config;
+use backend::routes;
+use backend::state::AppState;
+
+/// Build the CORS policy from config.
+///
+/// - No `CORS_ORIGINS` set (local dev): allow everything so the Vite dev
+///   server on :5173 just works.
+/// - Origins set (production): only those exact origins may call the API.
+fn cors_layer(config: &Config) -> CorsLayer {
+    if config.cors_origins.is_empty() {
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+    } else {
+        let origins = config
+            .cors_origins
+            .iter()
+            .filter_map(|o| o.parse::<HeaderValue>().ok())
+            .collect::<Vec<_>>();
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(origins))
+            .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
+            .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // JSON/structured logging; verbosity controlled by RUST_LOG.
+    // Structured logging; verbosity via RUST_LOG (defaults to "info").
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
-    let config = backend::config::Config::from_env()?;
+    // 1. Read and validate the environment.
+    let config = Config::from_env()?;
 
-    let app = Router::new().route(
-        "/healthz",
-        get(|| async {
-            Json(backend::domain::Health {
-                status: "ok".to_string(),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-            })
-        }),
-    );
+    // 2. Connect to PostgreSQL and apply any pending migrations.
+    let pool = backend::db::connect(&config.database_url)?;
+    backend::db::migrate(&pool).await?;
 
+    // 3. Assemble the router with shared state and CORS.
+    let state = AppState {
+        db: pool,
+        config: Arc::new(config.clone()),
+    };
+    let app = routes::router(state).layer(cors_layer(&config));
+
+    // 4. Serve.
     let listener = tokio::net::TcpListener::bind(&config.api_bind).await?;
     tracing::info!(bind = %config.api_bind, "api listening");
     axum::serve(listener, app).await?;

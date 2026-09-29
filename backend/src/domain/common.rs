@@ -50,12 +50,15 @@ pub struct Health {
 }
 
 /// `GET /readyz`: reachability of hard dependencies.
+/// `null` for a dependency means "not checked in this build stage".
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Ready {
     pub db: bool,
-    pub rpc: bool,
-    pub panta: bool,
+    #[ts(optional)]
+    pub rpc: Option<bool>,
+    #[ts(optional)]
+    pub panta: Option<bool>,
 }
 
 /// Where a piece of returned data came from (brief §8: label APP analysis).

@@ -74,10 +74,7 @@ impl Config {
 
             solana_rpc_url: optional("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com"),
             solana_ws_url: std::env::var("SOLANA_WS_URL").ok(),
-            usdc_mint: optional(
-                "USDC_MINT",
-                "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-            ),
+            usdc_mint: optional("USDC_MINT", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),
 
             fee_wallet_pubkey: optional("FEE_WALLET_PUBKEY", ""),
             app_fee_bps: optional("APP_FEE_BPS", "75").parse()?,
@@ -99,7 +96,10 @@ impl Config {
     /// default JWT secret (brief §15).
     fn validate(&self) -> anyhow::Result<()> {
         if self.app_env == "production" {
-            anyhow::ensure!(!self.panta_mock, "PANTA_MOCK=true is not allowed in production");
+            anyhow::ensure!(
+                !self.panta_mock,
+                "PANTA_MOCK=true is not allowed in production"
+            );
             anyhow::ensure!(
                 self.jwt_secret != "dev-only-insecure-secret",
                 "JWT_SECRET must be set in production"
