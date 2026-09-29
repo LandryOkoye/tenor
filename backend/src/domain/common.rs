@@ -3,13 +3,13 @@ use ts_rs::TS;
 
 /// Standard error envelope for every non-2xx response (brief §9).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct ApiError {
     pub error: ApiErrorBody,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct ApiErrorBody {
     /// Machine-readable code, e.g. `QUOTE_STALE`, `LEG_NOT_TRADABLE`,
     /// `SIMULATION_FAILED`, `TX_TOO_LARGE`, `SLIPPAGE_EXCEEDED`.
@@ -34,7 +34,7 @@ impl ApiError {
 
 /// Cursor-paginated list.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct Page<T: TS> {
     pub items: Vec<T>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -43,7 +43,7 @@ pub struct Page<T: TS> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct Health {
     pub status: String,
     pub version: String,
@@ -51,7 +51,7 @@ pub struct Health {
 
 /// `GET /readyz`: reachability of hard dependencies.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct Ready {
     pub db: bool,
     pub rpc: bool,
@@ -61,7 +61,7 @@ pub struct Ready {
 /// Where a piece of returned data came from (brief §8: label APP analysis).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub enum DataSource {
     Panta,
     AppAnalysis,

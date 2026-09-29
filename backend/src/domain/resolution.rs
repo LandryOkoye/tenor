@@ -7,7 +7,7 @@ use crate::domain::common::DataSource;
 /// Resolution Center buckets for `GET /v1/resolution/markets?status=`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub enum ResolutionStatus {
     Open,
     ResolvingSoon,
@@ -16,7 +16,7 @@ pub enum ResolutionStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct ResolutionMarketRow {
     pub market_id: String,
     pub title: String,
@@ -34,7 +34,7 @@ pub struct ResolutionMarketRow {
 
 /// One step in a market's evidence timeline (brief §8).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct TimelineEvent {
     pub ts: DateTime<Utc>,
     /// `created` | `trading_started` | `closed` | `resolution_proposed` | `resolved` | `claims_open`
@@ -47,7 +47,7 @@ pub struct TimelineEvent {
 
 /// Creator / oracle track record (brief §8). Every field is APP analysis.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct CreatorScorecard {
     pub creator: String,
     pub markets_created: i64,
@@ -63,7 +63,7 @@ pub struct CreatorScorecard {
 
 /// `GET /v1/resolution/markets/{id}`
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct ResolutionMarketDetail {
     pub market_id: String,
     pub title: String,
@@ -81,7 +81,7 @@ pub struct ResolutionMarketDetail {
 
 /// `GET /v1/resolution/creators/{creator}`
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct CreatorDetail {
     pub scorecard: CreatorScorecard,
     pub markets: Vec<ResolutionMarketRow>,

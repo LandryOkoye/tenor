@@ -7,7 +7,7 @@ use crate::domain::market::Side;
 
 /// `POST /v1/orders/quote`
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct OrderQuoteRequest {
     pub market_id: String,
     pub side: Side,
@@ -16,7 +16,7 @@ pub struct OrderQuoteRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct OrderQuote {
     pub quote_id: String,
     pub market_id: String,
@@ -33,7 +33,7 @@ pub struct OrderQuote {
 
 /// Human-readable disclosure shown before signing (brief §12).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct TxSummary {
     pub summary_lines: Vec<String>,
     pub total_usdc: String,
@@ -45,7 +45,7 @@ pub struct TxSummary {
 
 /// `POST /v1/orders/{quoteId}/build` response.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct BuildResponse {
     pub order_id: Uuid,
     /// Base64-encoded unsigned VersionedTransactions (usually exactly one).
@@ -56,7 +56,7 @@ pub struct BuildResponse {
 
 /// `POST /v1/orders/{orderId}/submit` and basket purchase submit.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct SubmitRequest {
     /// Base64-encoded signed VersionedTransactions, same order as build returned.
     pub signed_txs: Vec<String>,
@@ -64,7 +64,7 @@ pub struct SubmitRequest {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub enum OrderStatus {
     Quoted,
     Built,
@@ -76,7 +76,7 @@ pub enum OrderStatus {
 
 /// `GET /v1/orders/{orderId}`
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct OrderView {
     pub order_id: Uuid,
     pub market_id: String,

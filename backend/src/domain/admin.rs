@@ -8,7 +8,7 @@ use crate::domain::market::Side;
 
 /// Light view of a Panta market for the admin curation UI.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct AdminPantaMarket {
     pub id: String,
     pub title: String,
@@ -21,7 +21,7 @@ pub struct AdminPantaMarket {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct CreateBasketLeg {
     pub market_id: String,
     pub side: Side,
@@ -30,7 +30,7 @@ pub struct CreateBasketLeg {
 
 /// `POST /v1/admin/baskets` (brief §7.2).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct CreateBasketRequest {
     pub slug: String,
     pub title: String,
@@ -44,7 +44,7 @@ pub struct CreateBasketRequest {
 
 /// `PATCH /v1/admin/baskets/{id}` — every field optional; `legs` replaces all legs.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct UpdateBasketRequest {
     pub slug: Option<String>,
     pub title: Option<String>,
@@ -57,7 +57,7 @@ pub struct UpdateBasketRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct AdminBasketLeg {
     pub market_id: String,
     pub side: Side,
@@ -65,7 +65,7 @@ pub struct AdminBasketLeg {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct AdminBasketView {
     pub id: Uuid,
     pub slug: String,

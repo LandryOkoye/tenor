@@ -4,7 +4,7 @@ use ts_rs::TS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub enum Side {
     Yes,
     No,
@@ -27,7 +27,7 @@ impl Side {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct MarketSummary {
     /// Panta market id.
     pub id: String,
@@ -48,7 +48,7 @@ pub struct MarketSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct MarketDetail {
     pub id: String,
     pub title: String,
@@ -70,7 +70,7 @@ pub struct MarketDetail {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct BasketRef {
     pub slug: String,
     pub title: String,
@@ -78,7 +78,7 @@ pub struct BasketRef {
 
 /// `GET /v1/markets/{id}/history` – one price snapshot (D10: our own snapshots).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct PricePoint {
     pub ts: DateTime<Utc>,
     pub yes_price: String,
@@ -86,7 +86,7 @@ pub struct PricePoint {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct MarketHistory {
     pub market_id: String,
     pub range: String,
@@ -96,7 +96,7 @@ pub struct MarketHistory {
 
 /// One public trade on a market (from Panta's trade tape).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct MarketTrade {
     pub signature: Option<String>,
     pub side: Option<Side>,
@@ -107,7 +107,7 @@ pub struct MarketTrade {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct Category {
     pub id: String,
     pub name: String,
@@ -115,7 +115,7 @@ pub struct Category {
 
 /// Query params for `GET /v1/markets`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct MarketsQuery {
     pub category: Option<String>,
     pub q: Option<String>,

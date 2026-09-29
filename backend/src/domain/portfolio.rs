@@ -7,7 +7,7 @@ use crate::domain::market::Side;
 
 /// A single-market position (not part of a recorded basket purchase).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct PortfolioPosition {
     pub market_id: String,
     pub market_title: String,
@@ -26,7 +26,7 @@ pub struct PortfolioPosition {
 
 /// A basket as shown in the portfolio (brief §7.6).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct PortfolioBasket {
     pub purchase_id: Uuid,
     pub template_slug: String,
@@ -44,7 +44,7 @@ pub struct PortfolioBasket {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct PortfolioBasketLeg {
     pub order_id: Uuid,
     pub market_id: String,
@@ -58,7 +58,7 @@ pub struct PortfolioBasketLeg {
 
 /// `GET /v1/portfolio`
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct Portfolio {
     pub wallet: String,
     pub single_positions: Vec<PortfolioPosition>,
@@ -70,7 +70,7 @@ pub struct Portfolio {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub enum ActivityKind {
     Buy,
     BasketBuy,
@@ -79,7 +79,7 @@ pub enum ActivityKind {
 
 /// `GET /v1/portfolio/activity`
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct ActivityItem {
     pub kind: ActivityKind,
     pub market_id: Option<String>,
@@ -93,14 +93,14 @@ pub struct ActivityItem {
 
 /// `POST /v1/claims/build`
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct ClaimsBuildRequest {
     /// Markets to claim on. Empty/one entry = single claim; all claimable = claim all.
     pub market_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct ClaimsBuildResponse {
     pub transactions: Vec<String>,
     pub summary: crate::domain::order::TxSummary,
@@ -108,7 +108,7 @@ pub struct ClaimsBuildResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct ClaimsSubmitResponse {
     pub signatures: Vec<String>,
     pub status: String,

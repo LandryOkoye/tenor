@@ -7,7 +7,7 @@ use crate::domain::market::Side;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub enum BasketStatus {
     Draft,
     Published,
@@ -16,7 +16,7 @@ pub enum BasketStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct BasketTemplateSummary {
     pub id: Uuid,
     pub slug: String,
@@ -38,7 +38,7 @@ pub struct BasketTemplateSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct BasketLegView {
     pub market_id: String,
     pub market_title: String,
@@ -51,7 +51,7 @@ pub struct BasketLegView {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct BasketTemplateDetail {
     pub id: Uuid,
     pub slug: String,
@@ -70,7 +70,7 @@ pub struct BasketTemplateDetail {
 
 /// `POST /v1/baskets/{id}/quote`
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct BasketQuoteRequest {
     /// Total USDC base units to spend (including our fee).
     pub amount_usdc: String,
@@ -78,7 +78,7 @@ pub struct BasketQuoteRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct BasketQuoteLeg {
     pub market_id: String,
     pub market_title: String,
@@ -92,7 +92,7 @@ pub struct BasketQuoteLeg {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct BasketQuote {
     pub quote_id: Uuid,
     pub template_id: Uuid,
@@ -105,13 +105,13 @@ pub struct BasketQuote {
 
 /// `POST /v1/baskets/quotes/{quoteId}/build`
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct BasketBuildRequest {
     pub wallet: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct BasketBuildResponse {
     pub purchase_id: Uuid,
     pub transactions: Vec<String>,
@@ -122,7 +122,7 @@ pub struct BasketBuildResponse {
 /// Purchase state machine (brief §7.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub enum PurchaseStatus {
     Quoted,
     Built,
@@ -140,7 +140,7 @@ pub enum PurchaseStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub enum LegStatus {
     Pending,
     Filled,
@@ -151,7 +151,7 @@ pub enum LegStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct PurchaseLegView {
     pub order_id: Uuid,
     pub market_id: String,
@@ -168,7 +168,7 @@ pub struct PurchaseLegView {
 
 /// `GET /v1/baskets/purchases/{id}`
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export)]
 pub struct BasketPurchaseView {
     pub id: Uuid,
     pub template_id: Uuid,
