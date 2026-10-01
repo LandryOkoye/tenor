@@ -80,3 +80,41 @@ impl From<deadpool_postgres::PoolError> for AppError {
         AppError::internal("database unavailable")
     }
 }
+
+/// Map Panta failures onto our error envelope.
+///
+/// - Documented Panta error codes (e.g. `QUOTE_STALE`, `MARKET_NOT_FOUND`)
+///   pass through unchanged with the same HTTP status Panta used, so the
+///   frontend can branch on them (brief §9).
+/// - Transport problems become `PANTA_UNAVAILABLE` (502) — we never leak
+///   internal details to clients.
+impl From<crate::panta::PantaError> for AppError {
+    fn from(e: crate::panta::PantaError) -> Self {
+        match e {
+            crate::panta::PantaError::Api {
+                code,
+                message,
+                status,
+            } => {
+                let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
+                AppError::new(status, &code, message)
+            }
+            crate::panta::PantaError::RateLimited { .. } => AppError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "RATE_LIMITED",
+                "prediction market provider rate limit reached; retry shortly",
+            ),
+            crate::panta::PantaError::Timeout
+            | crate::panta::PantaError::Network(_)
+            | crate::panta::PantaError::Decode(_) => {
+                tracing::error!(error = %e, "panta unavailable");
+                AppError::new(
+                    StatusCode::BAD_GATEWAY,
+                    "PANTA_UNAVAILABLE",
+                    "prediction market provider is unreachable",
+                )
+            }
+            crate::panta::PantaError::Invalid(m) => AppError::bad_request("INVALID_REQUEST", m),
+        }
+    }
+}

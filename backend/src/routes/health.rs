@@ -2,9 +2,9 @@
 //!
 //! - `/healthz` answers "is the process alive?" — never touches dependencies,
 //!   so an overloaded database does not get the process killed.
-//! - `/readyz` answers "can we serve traffic?" — checks PostgreSQL with a
-//!   trivial query. RPC and Panta checks are wired in when those clients are
-//!   built (later steps); until then they report `null` (not checked).
+//! - `/readyz` answers "can we serve traffic?" — checks PostgreSQL and Panta.
+//!   The Solana RPC check is wired in when the transaction layer is built
+//!   (next build step); until then it reports `null` (not checked).
 
 use axum::{extract::State, http::StatusCode, Json};
 
@@ -31,10 +31,14 @@ pub async fn readyz(State(state): State<AppState>) -> (StatusCode, Json<Ready>) 
         }
     };
 
+    // Panta: the client itself decides how to probe (categories for HTTP,
+    // always-true for the mock) and reports false on failure.
+    let panta_ok = state.panta.health().await.ok();
+
     let ready = Ready {
         db: db_ok,
-        rpc: None,   // Solana RPC check added in the solana-tx build step
-        panta: None, // Panta check added in the panta-client build step
+        rpc: None, // Solana RPC check added in the solana-tx build step
+        panta: panta_ok,
     };
 
     let status = if db_ok {

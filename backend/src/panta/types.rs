@@ -184,7 +184,11 @@ pub struct BuildRequest {
     pub wallet: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
-    #[serde(default, rename = "maxSlippageBps", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "maxSlippageBps",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub max_slippage_bps: Option<u32>,
 }
 
@@ -342,7 +346,11 @@ pub struct ReportTradeRequest {
     pub market_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quote_id: Option<String>,
-    #[serde(default, rename = "clientOrderId", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "clientOrderId",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub client_order_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,

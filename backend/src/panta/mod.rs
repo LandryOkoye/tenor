@@ -21,7 +21,7 @@ mod mock;
 mod rate;
 mod types;
 
-pub use client::{make_client, MarketFilter, PantaApi};
+pub use client::{make_client, PantaApi};
 pub use error::PantaError;
 pub use mock::MockPanta;
 pub use types::*;

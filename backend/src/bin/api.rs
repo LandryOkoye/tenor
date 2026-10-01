@@ -51,10 +51,14 @@ async fn main() -> anyhow::Result<()> {
     let pool = backend::db::connect(&config.database_url)?;
     backend::db::migrate(&pool).await?;
 
-    // 3. Assemble the router with shared state and CORS.
+    // 3. Build the Panta client (mock in dev, real HTTPS when configured).
+    let panta = backend::panta::make_client(&config);
+
+    // 4. Assemble the router with shared state and CORS.
     let state = AppState {
         db: pool,
         config: Arc::new(config.clone()),
+        panta,
     };
     let app = routes::router(state).layer(cors_layer(&config));
 

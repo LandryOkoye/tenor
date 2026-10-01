@@ -20,7 +20,8 @@ pub struct RateLimiter {
     /// …per sliding window of this length.
     window: Duration,
     /// Timestamps of the requests we already allowed inside the window.
-    hits: Mutex<VecDeque<std::time::Instant>>,
+    /// tokio's Instant (not std's) so paused-clock tests behave identically.
+    hits: Mutex<VecDeque<tokio::time::Instant>>,
 }
 
 impl RateLimiter {
@@ -38,7 +39,7 @@ impl RateLimiter {
             // How long (if at all) do we need to wait for a free slot?
             let wait_for = {
                 let mut hits = self.hits.lock().await;
-                let now = std::time::Instant::now();
+                let now = tokio::time::Instant::now();
 
                 // Drop timestamps that slid out of the window.
                 while let Some(oldest) = hits.front() {
@@ -59,7 +60,7 @@ impl RateLimiter {
             };
 
             match wait_for {
-                None => return,          // slot acquired
+                None => return,                         // slot acquired
                 Some(d) => tokio::time::sleep(d).await, // wait and retry
             }
         }
