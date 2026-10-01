@@ -27,6 +27,11 @@ pub struct Config {
     pub app_fee_bps: u64,
     pub max_basket_legs: usize,
     pub default_slippage_bps: u32,
+    /// Priority fee (micro-lamports per compute unit) for every purchase tx.
+    pub priority_fee_microlamports: u64,
+    /// Panta program ids allowed inside user transactions (safety allowlist).
+    /// Required in production; in dev, mock instructions use the System program.
+    pub panta_program_ids: Vec<String>,
 
     // --- Auth / security ---
     pub jwt_secret: String,
@@ -80,6 +85,8 @@ impl Config {
             app_fee_bps: optional("APP_FEE_BPS", "75").parse()?,
             max_basket_legs: optional("MAX_BASKET_LEGS", "4").parse()?,
             default_slippage_bps: optional("DEFAULT_SLIPPAGE_BPS", "150").parse()?,
+            priority_fee_microlamports: optional("PRIORITY_FEE_MICROLAMPORTS", "5000").parse()?,
+            panta_program_ids: list("PANTA_PROGRAM_IDS"),
 
             jwt_secret: optional("JWT_SECRET", "dev-only-insecure-secret"),
             admin_wallets: list("ADMIN_WALLETS"),
@@ -107,6 +114,10 @@ impl Config {
             anyhow::ensure!(
                 !self.panta_api_key.is_empty(),
                 "PANTA_API_KEY must be set in production"
+            );
+            anyhow::ensure!(
+                !self.panta_program_ids.is_empty(),
+                "PANTA_PROGRAM_IDS must be set in production (transaction safety allowlist)"
             );
         }
         Ok(())

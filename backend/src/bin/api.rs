@@ -51,14 +51,17 @@ async fn main() -> anyhow::Result<()> {
     let pool = backend::db::connect(&config.database_url)?;
     backend::db::migrate(&pool).await?;
 
-    // 3. Build the Panta client (mock in dev, real HTTPS when configured).
+    // 3. Build the Panta client (mock in dev, real HTTPS when configured)
+    //    and the Solana transaction context (RPC + fee wallet + allowlist).
     let panta = backend::panta::make_client(&config);
+    let solana = std::sync::Arc::new(backend::solana_tx::SolanaCtx::from_config(&config)?);
 
     // 4. Assemble the router with shared state and CORS.
     let state = AppState {
         db: pool,
         config: Arc::new(config.clone()),
         panta,
+        solana,
     };
     let app = routes::router(state).layer(cors_layer(&config));
 

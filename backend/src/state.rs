@@ -8,6 +8,7 @@ use std::sync::Arc;
 use crate::config::Config;
 use crate::db::DbPool;
 use crate::panta::PantaApi;
+use crate::solana_tx::SolanaCtx;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -17,4 +18,6 @@ pub struct AppState {
     pub config: Arc<Config>,
     /// Panta client: real HTTPS client, or the in-memory mock in dev mode.
     pub panta: Arc<dyn PantaApi>,
+    /// Solana transaction context (RPC handle, fee wallet, safety allowlist).
+    pub solana: Arc<SolanaCtx>,
 }

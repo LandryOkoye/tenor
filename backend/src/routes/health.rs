@@ -35,9 +35,12 @@ pub async fn readyz(State(state): State<AppState>) -> (StatusCode, Json<Ready>) 
     // always-true for the mock) and reports false on failure.
     let panta_ok = state.panta.health().await.ok();
 
+    // Solana RPC: can we fetch a blockhash? (Mock mode reports true.)
+    let rpc_ok = Some(state.solana.health().await);
+
     let ready = Ready {
         db: db_ok,
-        rpc: None, // Solana RPC check added in the solana-tx build step
+        rpc: rpc_ok,
         panta: panta_ok,
     };
 

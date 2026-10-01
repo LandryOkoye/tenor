@@ -18,4 +18,5 @@ pub mod domain;
 pub mod error;
 pub mod panta;
 pub mod routes;
+pub mod solana_tx;
 pub mod state;
