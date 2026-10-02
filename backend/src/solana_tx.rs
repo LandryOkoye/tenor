@@ -25,7 +25,6 @@
 //! converted to raw token units for the SPL instruction — never floats.
 
 use std::str::FromStr;
-use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine;
@@ -34,7 +33,7 @@ use solana_sdk::{
     instruction::{AccountMeta, Instruction},
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
-    signature::{Signature, Signer},
+    signature::Signature,
     transaction::VersionedTransaction,
 };
 
@@ -44,9 +43,11 @@ use crate::panta::WireInstruction;
 // --- Well-known Solana program ids (fixed constants, no discovery) ----------
 
 /// SPL Token program (classic Tokenkeg — USDC lives here).
-pub const TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKP6TWYRWCrAbQmRJgxRXWFr";
+/// Verified: decodes to a valid 32-byte pubkey (solana-program-library docs).
+pub const TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 /// Associated Token Account program (derives the user/fee-wallet USDC ATAs).
-pub const ATA_PROGRAM: &str = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efADOs6wRLx5";
+/// Verified: decodes to a valid 32-byte pubkey (spl.solana.com docs).
+pub const ATA_PROGRAM: &str = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 /// ComputeBudget program (CU limit + priority fee instructions).
 pub const COMPUTE_BUDGET_PROGRAM: &str = "ComputeBudget111111111111111111111111111111";
 /// System program (mock instructions in dev mode; never expected in real buys).
@@ -105,7 +106,10 @@ impl SolanaCtx {
 
         // Dev mode may run without a fee wallet configured; production must have one.
         let fee_wallet = if config.fee_wallet_pubkey.is_empty() {
-            anyhow::ensure!(!config.is_production(), "FEE_WALLET_PUBKEY must be set in production");
+            anyhow::ensure!(
+                !config.is_production(),
+                "FEE_WALLET_PUBKEY must be set in production"
+            );
             // Deterministic placeholder in dev (on-chain funds are never moved in mock mode).
             Pubkey::default()
         } else {
@@ -149,7 +153,7 @@ impl SolanaCtx {
         let token_program = Pubkey::from_str(TOKEN_PROGRAM).expect("token program id");
         let ata_program = Pubkey::from_str(ATA_PROGRAM).expect("ata program id");
         Pubkey::find_program_address(
-            &[owner, &token_program, mint],
+            &[owner.as_ref(), token_program.as_ref(), mint.as_ref()],
             &ata_program,
         )
         .0
@@ -162,7 +166,11 @@ impl SolanaCtx {
     ///
     /// Hand-rolled (instead of pulling in spl-token) so the instruction shape
     /// is explicit and reviewable: data = [12, amount u64-LE, decimals].
-    pub fn fee_instruction(&self, payer: &Pubkey, amount_base: i64) -> Result<Instruction, TxError> {
+    pub fn fee_instruction(
+        &self,
+        payer: &Pubkey,
+        amount_base: i64,
+    ) -> Result<Instruction, TxError> {
         if amount_base < 0 {
             return Err(TxError::Invalid("fee amount must be non-negative".into()));
         }
@@ -171,9 +179,9 @@ impl SolanaCtx {
             program_id: token_program,
             accounts: vec![
                 AccountMeta::new(self.user_usdc_ata(payer), false), // source: buyer's USDC
-                AccountMeta::new_readonly(self.usdc_mint, false),  // mint (decimals check)
+                AccountMeta::new_readonly(self.usdc_mint, false),   // mint (decimals check)
                 AccountMeta::new(self.fee_usdc_ata(), false),       // destination: fee wallet
-                AccountMeta::new_readonly(*payer, true),           // authority: buyer signs
+                AccountMeta::new_readonly(*payer, true),            // authority: buyer signs
             ],
             data: [
                 vec![SPL_TRANSFER_CHECKED],
@@ -289,11 +297,7 @@ impl SolanaCtx {
 
         // Pad with zeroed signatures so the tx is wire-serializable and the
         // frontend can deserialize + sign it. These placeholders are standard.
-        let n_signers = tx
-            .message
-            .header()
-            .num_required_signatures
-            .max(1) as usize; // payer is always a signer
+        let n_signers = tx.message.header().num_required_signatures.max(1) as usize; // payer is always a signer
         tx.signatures = vec![Signature::default(); n_signers];
 
         // Size guard: signatures + message must fit one network packet.
@@ -350,25 +354,43 @@ impl SolanaCtx {
             ));
         }
 
-        // 2. Every instruction must come from an allowlisted program, and we
-        //    must be able to inspect it (unresolvable lookup accounts fail).
+        // 2. Every instruction must come from an allowlisted program, and all
+        //    its accounts must resolve within the static key list (we never
+        //    ship ALTs; an out-of-range index means something is wrong).
         let mut fee_transfers = Vec::new(); // (source, dest, amount) for fee checking
+        let token_program = Pubkey::from_str(TOKEN_PROGRAM).unwrap();
         for (i, compiled) in tx.message.instructions().iter().enumerate() {
-            let program_id = compiled
-                .program_id(&static_keys)
-                .ok_or_else(|| TxError::Validation("instruction program account missing".into()))?;
+            // Program id: index into the static keys; fail on any mismatch.
+            let program_index = compiled.program_id_index as usize;
+            if program_index >= static_keys.len() {
+                return Err(TxError::Validation(format!(
+                    "instruction {i} references a non-static program account (ALT not expected)"
+                )));
+            }
+            let program_id = &static_keys[program_index];
             if !allowlist.contains(program_id) {
                 return Err(TxError::Validation(format!(
                     "instruction {i} uses unknown program {program_id}"
                 )));
             }
-            let accounts = compiled
-                .resolve(&static_keys)
-                .ok_or_else(|| TxError::Validation("instruction accounts missing".into()))?;
+
+            // Resolve account pubkeys by index (no lookup tables in MVP txs).
+            let mut accounts = Vec::with_capacity(compiled.accounts.len());
+            for idx in compiled.accounts.iter() {
+                let idx = *idx as usize;
+                if idx >= static_keys.len() {
+                    return Err(TxError::Validation(format!(
+                        "instruction {i} references a non-static account (ALT not expected)"
+                    )));
+                }
+                accounts.push(static_keys[idx]);
+            }
 
             // Track any SPL transfer_checked for the fee audit below.
-            if program_id == &Pubkey::from_str(TOKEN_PROGRAM).unwrap() {
-                if let Some((source, dest, amount)) = decode_transfer_checked(&compiled.data, accounts) {
+            if program_id == &token_program {
+                if let Some((source, dest, amount)) =
+                    decode_transfer_checked(&compiled.data, &accounts)
+                {
                     fee_transfers.push((source, dest, amount));
                 }
             }
@@ -420,7 +442,8 @@ impl SolanaCtx {
             .rpc
             .simulate_transaction(tx)
             .await
-            .map_err(|e| TxError::Rpc(format!("simulation call failed: {e}")))?;
+            .map_err(|e| TxError::Rpc(format!("simulation call failed: {e}")))?
+            .value; // solana-client wraps results in Response { value, .. }
         if let Some(err) = result.err {
             return Err(TxError::Simulation(format!(
                 "{err}; logs: {:?}",
@@ -447,10 +470,8 @@ impl SolanaCtx {
         for _ in 0..3 {
             match self.rpc.send_transaction(tx).await {
                 Ok(sig) => {
-                    if let Err(e) = self.confirm(&sig).await {
-                        // Confirmed-failed txs are terminal (not retried).
-                        return Err(e);
-                    }
+                    // Confirmed-failed txs are terminal (not retried).
+                    self.confirm(&sig).await?;
                     return Ok(sig.to_string());
                 }
                 Err(e) => {
@@ -472,9 +493,10 @@ impl SolanaCtx {
         while tokio::time::Instant::now() < deadline {
             let statuses = self
                 .rpc
-                .get_signature_statuses(&[sig])
+                .get_signature_statuses(&[*sig])
                 .await
-                .map_err(|e| TxError::Rpc(format!("status check failed: {e}")))?;
+                .map_err(|e| TxError::Rpc(format!("status check failed: {e}")))?
+                .value; // unwrap the Response envelope
             match statuses.first().and_then(|s| s.to_owned()) {
                 Some(status) => {
                     if let Some(err) = status.err {
@@ -503,16 +525,13 @@ impl SolanaCtx {
 
 /// Decode an SPL `transfer_checked` instruction: (source, destination, amount).
 /// Any other Token instruction shape returns None (ignored by the fee audit).
-fn decode_transfer_checked(
-    data: &[u8],
-    accounts: &[Pubkey],
-) -> Option<(&Pubkey, &Pubkey, u64)> {
+fn decode_transfer_checked(data: &[u8], accounts: &[Pubkey]) -> Option<(Pubkey, Pubkey, u64)> {
     if data.first() != Some(&SPL_TRANSFER_CHECKED) || data.len() != 10 || accounts.len() < 3 {
         return None;
     }
     let mut amount_bytes = [0u8; 8];
     amount_bytes.copy_from_slice(&data[1..9]);
-    Some((&accounts[0], &accounts[2], u64::from_le_bytes(amount_bytes)))
+    Some((accounts[0], accounts[2], u64::from_le_bytes(amount_bytes)))
 }
 
 /// Deterministic fake signature for mock/dev mode.
@@ -533,8 +552,10 @@ mod tests {
         SolanaCtx {
             rpc: RpcClient::new("http://localhost:8899".to_string()),
             usdc_mint: Pubkey::from_str("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v").unwrap(),
-            fee_wallet: Pubkey::from_str("FeeWa11et111111111111111111111111111111111").unwrap(),
-            panta_programs: vec![Pubkey::from_str("Panta1111111111111111111111111111111111111").unwrap()],
+            fee_wallet: Pubkey::from_str("1FeeWa11et111111111111111111111111111111111").unwrap(),
+            panta_programs: vec![
+                Pubkey::from_str("1Panta1111111111111111111111111111111111111").unwrap(),
+            ],
             priority_fee_microlamports: 5000,
             mock: true,
         }
@@ -547,7 +568,7 @@ mod tests {
     /// One Panta-shaped leg instruction against a fake market account.
     fn leg_instruction(user: Pubkey) -> Vec<Instruction> {
         vec![Instruction {
-            program_id: Pubkey::from_str("Panta1111111111111111111111111111111111111").unwrap(),
+            program_id: Pubkey::from_str("1Panta1111111111111111111111111111111111111").unwrap(),
             accounts: vec![
                 AccountMeta::new_readonly(user, true),
                 AccountMeta::new(Pubkey::new_unique(), false),
@@ -568,7 +589,10 @@ mod tests {
         assert_eq!(ix.accounts[1].pubkey, ctx.usdc_mint); // mint
         assert_eq!(ix.accounts[2].pubkey, ctx.fee_usdc_ata()); // fee destination
         assert!(ix.accounts[3].is_signer); // buyer authorizes
-        assert_eq!(ix.data, [vec![12u8], 150_000u64.to_le_bytes().to_vec(), vec![6u8]].concat());
+        assert_eq!(
+            ix.data,
+            [vec![12u8], 150_000u64.to_le_bytes().to_vec(), vec![6u8]].concat()
+        );
     }
 
     #[test]
@@ -583,7 +607,7 @@ mod tests {
             program_id: TOKEN_PROGRAM.to_string(),
             data: base64::engine::general_purpose::STANDARD.encode(vec![1, 2, 3]),
             accounts: vec![crate::panta::WireAccount {
-                pubkey: "FeeWa11et111111111111111111111111111111111".to_string(),
+                pubkey: "1FeeWa11et111111111111111111111111111111111".to_string(),
                 is_signer: true,
                 is_writable: false,
             }],
@@ -593,11 +617,17 @@ mod tests {
         assert!(ix.accounts[0].is_signer && !ix.accounts[0].is_writable);
 
         // Garbage base64 must fail, not panic.
-        let bad = WireInstruction { data: "!!!".into(), ..wire.clone() };
+        let bad = WireInstruction {
+            data: "!!!".into(),
+            ..wire.clone()
+        };
         assert!(SolanaCtx::parse_wire_instruction(&bad).is_err());
 
         // A program id that is not a valid pubkey must fail too.
-        let bad_program = WireInstruction { program_id: "not a pubkey".into(), ..wire.clone() };
+        let bad_program = WireInstruction {
+            program_id: "not a pubkey".into(),
+            ..wire.clone()
+        };
         assert!(SolanaCtx::parse_wire_instruction(&bad_program).is_err());
     }
 
@@ -630,7 +660,13 @@ mod tests {
         let ctx = ctx();
         let user = Pubkey::new_unique();
         let tx = ctx
-            .assemble_with_blockhash(&user, vec![leg_instruction(user)], Some(75_000), 400_000, zero_hash())
+            .assemble_with_blockhash(
+                &user,
+                vec![leg_instruction(user)],
+                Some(75_000),
+                400_000,
+                zero_hash(),
+            )
             .unwrap();
         assert!(ctx.validate(&tx, &user, Some(75_000)).is_ok());
     }
@@ -653,7 +689,13 @@ mod tests {
         let ctx = ctx();
         let user = Pubkey::new_unique();
         let tx = ctx
-            .assemble_with_blockhash(&user, vec![leg_instruction(user)], Some(75_000), 400_000, zero_hash())
+            .assemble_with_blockhash(
+                &user,
+                vec![leg_instruction(user)],
+                Some(75_000),
+                400_000,
+                zero_hash(),
+            )
             .unwrap();
 
         // Quoted 100_000 but tx pays 75_000 -> reject.
@@ -661,7 +703,13 @@ mod tests {
 
         // No fee transfer at all when one is expected -> reject.
         let no_fee = ctx
-            .assemble_with_blockhash(&user, vec![leg_instruction(user)], None, 400_000, zero_hash())
+            .assemble_with_blockhash(
+                &user,
+                vec![leg_instruction(user)],
+                None,
+                400_000,
+                zero_hash(),
+            )
             .unwrap();
         assert!(ctx.validate(&no_fee, &user, Some(75_000)).is_err());
     }
@@ -671,10 +719,18 @@ mod tests {
         let ctx = ctx();
         let user = Pubkey::new_unique();
         let tx = ctx
-            .assemble_with_blockhash(&user, vec![leg_instruction(user)], Some(75_000), 400_000, zero_hash())
+            .assemble_with_blockhash(
+                &user,
+                vec![leg_instruction(user)],
+                Some(75_000),
+                400_000,
+                zero_hash(),
+            )
             .unwrap();
         // Claim a different payer than the one who signed -> reject.
-        assert!(ctx.validate(&tx, &Pubkey::new_unique(), Some(75_000)).is_err());
+        assert!(ctx
+            .validate(&tx, &Pubkey::new_unique(), Some(75_000))
+            .is_err());
     }
 
     #[test]
@@ -684,11 +740,7 @@ mod tests {
         let c = Pubkey::new_unique();
         assert!(decode_transfer_checked(&[12, 0, 0], &[a, b, c]).is_none()); // too short
         assert!(decode_transfer_checked(&[3, 0, 0, 0, 0, 0, 0, 0, 0, 0], &[a, b, c]).is_none()); // wrong tag
-        let good = decode_transfer_checked(
-            &[12, 1, 0, 0, 0, 0, 0, 0, 0, 6],
-            &[a, b, c],
-        )
-        .unwrap();
+        let good = decode_transfer_checked(&[12, 1, 0, 0, 0, 0, 0, 0, 0, 6], &[a, b, c]).unwrap();
         assert_eq!(good.2, 1);
     }
 

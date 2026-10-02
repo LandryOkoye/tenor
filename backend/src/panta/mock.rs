@@ -496,7 +496,7 @@ impl PantaApi for MockPanta {
 mod tests {
     use super::*;
 
-    const WALLET: &str = "TestWa11et1111111111111111111111111111111";
+    const WALLET: &str = "11TestWa11et1111111111111111111111111111111";
     const MARKET: &str = "mkt_afcon_nigeria_wins_2027";
 
     /// The full quote -> build -> submit -> verify lifecycle must work and
