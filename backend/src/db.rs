@@ -18,10 +18,16 @@ pub type DbPool = Pool;
 /// 1. create `backend/migrations/NNNN_description.sql`,
 /// 2. add a row here. The runner records applied names in `schema_migrations`
 ///    so it never applies the same file twice.
-pub const MIGRATIONS: &[(&str, &str)] = &[(
-    "0001_initial",
-    include_str!("../migrations/0001_initial.sql"),
-)];
+pub const MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "0001_initial",
+        include_str!("../migrations/0001_initial.sql"),
+    ),
+    (
+        "0002_markets_volume",
+        include_str!("../migrations/0002_markets_volume.sql"),
+    ),
+];
 
 /// Parse a `postgres://user:pass@host:port/db` URL and build a connection pool.
 ///

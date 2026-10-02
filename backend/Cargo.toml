@@ -49,6 +49,8 @@ jsonwebtoken = "9"
 ed25519-dalek = "2"
 bs58 = "0.5"
 base64 = "0.22"
+# Wire-format serializer for Solana transactions (what wallets expect in base64).
+bincode = "1"
 
 # Binaries: `cargo run --bin api` / `cargo run --bin worker`
 [[bin]]
