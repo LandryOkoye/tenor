@@ -12,11 +12,13 @@
 //! - `routes`   – axum handlers (only used by the `api` binary)
 //! - `jobs`     – background jobs (only run by the `worker` binary)
 
+pub mod auth;
 pub mod config;
 pub mod db;
 pub mod domain;
 pub mod error;
 pub mod panta;
+pub mod queries;
 pub mod routes;
 pub mod solana_tx;
 pub mod state;
