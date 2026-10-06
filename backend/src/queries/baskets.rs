@@ -497,3 +497,62 @@ pub async fn purchase_leg_orders(
         })
         .collect())
 }
+
+/// Published template ids (basket_guard closes any with dead legs).
+pub async fn published_template_ids(client: &Client) -> Result<Vec<Uuid>, tokio_postgres::Error> {
+    let rows = client
+        .query(
+            "SELECT id FROM basket_templates WHERE status = 'published'",
+            &[],
+        )
+        .await?;
+    Ok(rows.iter().map(|r| r.get(0)).collect())
+}
+
+/// Settle purchase + leg statuses after resolutions changed (brief §7.4):
+/// filled orders on a resolved market become resolved_win / resolved_loss,
+/// and purchases move to active / partially_resolved / resolved based on
+/// legs. Idempotent: the WHERE clauses only match unsettled rows.
+pub async fn settle_resolutions(
+    client: &Client,
+    market_id: &str,
+    outcome: Option<&str>,
+) -> Result<u64, tokio_postgres::Error> {
+    let outcome = outcome.unwrap_or("yes");
+    // 1. Legs: mark filled orders on this market by outcome side.
+    let legs = client
+        .execute(
+            "UPDATE orders SET status = CASE WHEN side = $2 THEN 'resolved_win' ELSE 'resolved_loss' END,
+                                   updated_at = now()
+             WHERE market_id = $1 AND status = 'filled'",
+            &[&market_id, &outcome],
+        )
+        .await?;
+
+    // 2. Purchases holding legs on this market: recompute their aggregate
+    //    status from the legs' statuses.
+    client
+        .execute(
+            "UPDATE basket_purchases p SET status = s.new_status, updated_at = now()
+             FROM (
+                 SELECT o.basket_purchase_id AS pid,
+                        CASE
+                            WHEN count(*) FILTER (WHERE o.status = 'resolved_win' OR o.status = 'resolved_loss')
+                                 = count(*) THEN 'resolved'
+                            WHEN count(*) FILTER (WHERE o.status = 'resolved_win' OR o.status = 'resolved_loss')
+                                 > 0 THEN 'partially_resolved'
+                            ELSE 'active'
+                        END AS new_status
+                 FROM orders o
+                 WHERE o.basket_purchase_id IS NOT NULL AND o.status IN
+                     ('filled', 'resolved_win', 'resolved_loss')
+                 GROUP BY o.basket_purchase_id
+             ) s
+             WHERE p.id = s.pid
+               AND p.id IN (SELECT basket_purchase_id FROM orders WHERE market_id = $1)
+               AND p.status IN ('filled', 'active', 'partially_resolved')",
+            &[&market_id],
+        )
+        .await?;
+    Ok(legs as u64)
+}

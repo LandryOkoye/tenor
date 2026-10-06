@@ -31,9 +31,9 @@ pub async fn upsert_market(
             "INSERT INTO markets (id, title, category, phase, status, close_time,
                                   resolve_time, resolved_at, outcome, creator, oracle,
                                   rules_text, image_url, raw_json, volume, yes_price, no_price,
-                                  updated_at)
+                                  resolved, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
-                     now())
+                     $18, now())
              ON CONFLICT (id) DO UPDATE SET
                 title = EXCLUDED.title,
                 category = EXCLUDED.category,
@@ -49,8 +49,11 @@ pub async fn upsert_market(
                 image_url = EXCLUDED.image_url,
                 raw_json = EXCLUDED.raw_json,
                 volume = EXCLUDED.volume,
-                yes_price = EXCLUDED.yes_price,
-                no_price = EXCLUDED.no_price,
+                -- List rows often carry NULL prices; keep the last known
+                -- good price instead of overwriting with NULL.
+                yes_price = COALESCE(EXCLUDED.yes_price, markets.yes_price),
+                no_price = COALESCE(EXCLUDED.no_price, markets.no_price),
+                resolved = EXCLUDED.resolved,
                 updated_at = now()",
             &[
                 &m.market_id,
@@ -80,6 +83,7 @@ pub async fn upsert_market(
                 &volume_base,
                 &m.yes_price,
                 &m.no_price,
+                &m.resolved,
             ],
         )
         .await?;
@@ -348,4 +352,83 @@ pub async fn market_detail(
         oracle: row.get(14),
         in_baskets: baskets_containing(client, market_id).await?,
     }))
+}
+
+// --- worker support queries ---------------------------------------------------
+
+/// (phase, status, resolved) of a market, for change detection in market_sync.
+pub async fn status_tuple(
+    client: &Client,
+    market_id: &str,
+) -> Result<Option<(Option<String>, Option<String>, bool)>, tokio_postgres::Error> {
+    let row = client
+        .query_opt(
+            "SELECT phase, status, resolved FROM markets WHERE id = $1",
+            &[&market_id],
+        )
+        .await?;
+    Ok(row.map(|r| (r.get(0), r.get(1), r.get(2))))
+}
+
+/// Record one state-change event (feeds the Resolution Center, brief §8).
+pub async fn insert_event(
+    client: &Client,
+    market_id: &str,
+    event_type: &str,
+    payload: &serde_json::Value,
+) -> Result<(), tokio_postgres::Error> {
+    client
+        .execute(
+            "INSERT INTO market_events (market_id, event_type, payload) VALUES ($1, $2, $3)",
+            &[&market_id, &event_type, payload],
+        )
+        .await?;
+    Ok(())
+}
+
+/// Open, primary-phase markets with their current prices — snapshot input.
+/// (id, yes_price, no_price, volume)
+pub async fn open_market_prices(
+    client: &Client,
+) -> Result<Vec<(String, Option<f64>, Option<f64>, Option<i64>)>, tokio_postgres::Error> {
+    let rows = client
+        .query(
+            "SELECT id, yes_price::float8, no_price::float8, volume
+             FROM markets WHERE phase = 'primary' AND resolved = false",
+            &[],
+        )
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|r| (r.get::<_, String>(0), r.get(1), r.get(2), r.get(3)))
+        .collect())
+}
+
+/// Markets whose prices are still unknown (fresh catalog rows) — the sync
+/// job fetches their details so quotes and views have prices.
+pub async fn markets_missing_prices(
+    client: &Client,
+    limit: i64,
+) -> Result<Vec<String>, tokio_postgres::Error> {
+    let rows = client
+        .query(
+            "SELECT id FROM markets WHERE yes_price IS NULL AND phase = 'primary'
+             ORDER BY updated_at DESC LIMIT $1",
+            &[&limit],
+        )
+        .await?;
+    Ok(rows.iter().map(|r| r.get(0)).collect())
+}
+
+/// Markets that are resolved but whose orders/legs may not be settled yet.
+pub async fn resolved_markets(
+    client: &Client,
+) -> Result<Vec<(String, Option<String>)>, tokio_postgres::Error> {
+    let rows = client
+        .query(
+            "SELECT id, outcome FROM markets WHERE phase = 'resolved' AND resolved = true",
+            &[],
+        )
+        .await?;
+    Ok(rows.iter().map(|r| (r.get(0), r.get(1))).collect())
 }
