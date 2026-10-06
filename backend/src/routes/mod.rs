@@ -2,7 +2,9 @@
 //!
 //! `router()` assembles the full axum router under `/v1` plus health checks.
 
+pub mod admin;
 pub mod auth;
+pub mod baskets;
 pub mod health;
 pub mod markets;
 pub mod orders;
@@ -39,9 +41,31 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/orders/{id}/submit", post(orders::submit))
         .route("/v1/orders/{id}", get(orders::status));
 
+    // Baskets: public browsing, member trading (brief §9).
+    let basket_routes = Router::new()
+        .route("/v1/baskets", get(baskets::list))
+        .route("/v1/baskets/{slug}", get(baskets::detail))
+        .route("/v1/baskets/{id}/quote", post(baskets::quote))
+        .route("/v1/baskets/quotes/{quote_id}/build", post(baskets::build))
+        .route("/v1/baskets/purchases/{id}/submit", post(baskets::submit))
+        .route("/v1/baskets/purchases/{id}", get(baskets::purchase_status));
+
+    // Admin curation (AdminUser extractor: JWT + wallet allowlist).
+    let admin_routes = Router::new()
+        .route("/v1/admin/panta-markets", get(admin::search_markets))
+        .route("/v1/admin/baskets", post(admin::create))
+        .route(
+            "/v1/admin/baskets/{id}",
+            axum::routing::patch(admin::update),
+        )
+        .route("/v1/admin/baskets/{id}/publish", post(admin::publish))
+        .route("/v1/admin/baskets/{id}/close", post(admin::close));
+
     health_routes
         .merge(auth_routes)
         .merge(market_routes)
         .merge(order_routes)
+        .merge(basket_routes)
+        .merge(admin_routes)
         .with_state(state)
 }

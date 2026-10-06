@@ -103,13 +103,8 @@ pub struct BasketQuote {
     pub expires_at: DateTime<Utc>,
 }
 
-/// `POST /v1/baskets/quotes/{quoteId}/build`
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
-pub struct BasketBuildRequest {
-    pub wallet: String,
-}
-
+/// `POST /v1/baskets/quotes/{quoteId}/build` — the session identifies the
+/// caller, so the request has no body.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct BasketBuildResponse {

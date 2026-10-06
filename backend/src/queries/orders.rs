@@ -104,6 +104,21 @@ pub async fn mark_built(
     Ok(())
 }
 
+/// Link an order to the basket purchase it belongs to (legs of a basket).
+pub async fn link_to_purchase(
+    client: &Client,
+    order_id: Uuid,
+    purchase_id: Uuid,
+) -> Result<(), tokio_postgres::Error> {
+    client
+        .execute(
+            "UPDATE orders SET basket_purchase_id = $2 WHERE id = $1",
+            &[&order_id, &purchase_id],
+        )
+        .await?;
+    Ok(())
+}
+
 /// Signed by the user and broadcast; awaiting confirmation.
 pub async fn mark_submitted(
     client: &Client,

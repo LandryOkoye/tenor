@@ -13,6 +13,7 @@
 //! - `jobs`     – background jobs (only run by the `worker` binary)
 
 pub mod auth;
+pub mod basket;
 pub mod config;
 pub mod db;
 pub mod domain;
