@@ -88,18 +88,18 @@ pub async fn upsert_market(
 
 /// A market row as stored locally (subset of columns we serve).
 pub struct MarketRecord {
-    id: String,
-    title: String,
-    category: Option<String>,
-    phase: Option<String>,
-    status: String,
-    close_time: Option<DateTime<Utc>>,
-    resolve_time: Option<DateTime<Utc>>,
-    yes_price: Option<String>,
-    no_price: Option<String>,
-    volume: Option<i64>,
-    image_url: Option<String>,
-    updated_at: DateTime<Utc>,
+    pub id: String,
+    pub title: String,
+    pub category: Option<String>,
+    pub phase: Option<String>,
+    pub status: String,
+    pub close_time: Option<DateTime<Utc>>,
+    pub resolve_time: Option<DateTime<Utc>>,
+    pub yes_price: Option<String>,
+    pub no_price: Option<String>,
+    pub volume: Option<i64>,
+    pub image_url: Option<String>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// Read one market row by Panta market id.

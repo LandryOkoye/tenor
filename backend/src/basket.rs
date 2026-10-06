@@ -26,11 +26,7 @@ pub enum BasketError {
     #[error("a basket cannot hold both sides of market {0}")]
     BothSides(String),
     #[error("amount {amount} is outside the template's buy range ({min}..={max})")]
-    AmountOutOfRange {
-        amount: i64,
-        min: i64,
-        max: i64,
-    },
+    AmountOutOfRange { amount: i64, min: i64, max: i64 },
 }
 
 /// One leg definition as used by the engine (side + weight on a market).
@@ -44,7 +40,11 @@ pub struct LegSpec {
 /// Validate template-level rules that need no database (brief §7.2).
 /// Market liveness/liquidity checks happen at publish/quote time where we
 /// can consult the catalog.
-pub fn validate_template(legs: &[LegSpec], min_legs: usize, max_legs: usize) -> Result<(), BasketError> {
+pub fn validate_template(
+    legs: &[LegSpec],
+    min_legs: usize,
+    max_legs: usize,
+) -> Result<(), BasketError> {
     if legs.len() < min_legs || legs.len() > max_legs {
         return Err(BasketError::LegCount {
             min: min_legs,
@@ -81,11 +81,7 @@ pub fn validate_template(legs: &[LegSpec], min_legs: usize, max_legs: usize) -> 
 /// - the leftover dust is simply not spent — it stays in the user's wallet
 ///
 /// Integer math only. Returns (allocations in leg order, fee, dust).
-pub fn allocate(
-    amount_base: i64,
-    fee_bps: i64,
-    weights_bps: &[i32],
-) -> (Vec<i64>, i64, i64) {
+pub fn allocate(amount_base: i64, fee_bps: i64, weights_bps: &[i32]) -> (Vec<i64>, i64, i64) {
     let fee = amount_base * fee_bps / 10_000;
     let net = amount_base - fee;
 
@@ -146,25 +142,23 @@ mod tests {
 
     #[test]
     fn allocation_dust_stays_with_user() {
-        // 1 USDC across 3 equal legs: net = 992_500; per leg 330_833.33 -> 330_833
+        // 1 USDC, weights 1/3, 1/3, 1/3+1bps: the heavier leg can never be
+        // short-changed, and rounding remainder stays with the user.
         let (allocs, fee, dust) = allocate(1_000_000, 75, &[3_333, 3_333, 3_334]);
-        assert_eq!(fee, 7_500);
+        assert_eq!(fee, 7_500); // 0.75% of 1 USDC
         assert_eq!(allocs.len(), 3);
-        assert!(allocs.iter().all(|a| *a <= 330_833));
-        // Nothing lost: fee + allocated + dust == amount.
+        assert!(allocs.iter().all(|a| *a > 0));
+        assert_eq!(allocs[0], allocs[1]); // equal weights -> equal allocations
+        assert!(allocs[2] > allocs[0]); // heavier weight -> strictly more
+                                        // Nothing lost: fee + allocated + dust == amount.
         assert_eq!(fee + allocs.iter().sum::<i64>() + dust, 1_000_000);
-        assert!(dust >= 0);
+        assert!(dust < 100); // rounding remainder only
     }
 
     #[test]
     fn weights_never_lose_money() {
         // Property: fee + sum(allocs) + dust always equals the input amount.
-        for (amount, fee_bps) in [
-            (1_000_000, 75),
-            (3_500_000, 0),
-            (123_456_789, 100),
-            (7, 75),
-        ] {
+        for (amount, fee_bps) in [(1_000_000, 75), (3_500_000, 0), (123_456_789, 100), (7, 75)] {
             let (allocs, fee, dust) = allocate(amount, fee_bps, &[2_500, 2_500, 5_000]);
             assert_eq!(fee + allocs.iter().sum::<i64>() + dust, amount);
         }
@@ -177,22 +171,33 @@ mod tests {
 
         // Too few / too many legs.
         assert!(validate_template(&ok, 3, 4).is_err());
-        let five: Vec<_> = (0..5).map(|i| leg(&format!("m{i}"), Side::Yes, 2_000)).collect();
+        let five: Vec<_> = (0..5)
+            .map(|i| leg(&format!("m{i}"), Side::Yes, 2_000))
+            .collect();
         assert!(validate_template(&five, 2, 4).is_err());
 
         // Bad weights.
-        assert!(validate_template(&[leg("a", Side::Yes, 4_000), leg("b", Side::No, 5_000)], 2, 4).is_err());
-        assert!(validate_template(&[leg("a", Side::Yes, 0), leg("b", Side::No, 10_000)], 2, 4).is_err());
+        assert!(validate_template(
+            &[leg("a", Side::Yes, 4_000), leg("b", Side::No, 5_000)],
+            2,
+            4
+        )
+        .is_err());
+        assert!(
+            validate_template(&[leg("a", Side::Yes, 0), leg("b", Side::No, 10_000)], 2, 4).is_err()
+        );
 
         // Duplicate market and both-sides.
         assert!(validate_template(
             &[leg("a", Side::Yes, 5_000), leg("a", Side::Yes, 5_000)],
-            2, 4
+            2,
+            4
         )
         .is_err());
         assert!(validate_template(
             &[leg("a", Side::Yes, 5_000), leg("a", Side::No, 5_000)],
-            2, 4
+            2,
+            4
         )
         .is_err());
     }

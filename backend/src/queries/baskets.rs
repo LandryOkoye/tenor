@@ -10,6 +10,7 @@ use crate::domain::{BasketLegView, Side};
 
 /// Create a draft template with its legs. Legs are replaced wholesale on
 /// update, so they live in their own table keyed by template.
+#[allow(clippy::too_many_arguments)] // mirrors the table columns
 pub async fn create_template(
     client: &Client,
     slug: &str,
@@ -51,8 +52,11 @@ pub async fn set_legs(
 ) -> Result<(), tokio_postgres::Error> {
     // Delete + insert in one transaction: legs are a set, not a patch.
     let tx = client.transaction().await?;
-    tx.execute("DELETE FROM basket_legs WHERE template_id = $1", &[&template_id])
-        .await?;
+    tx.execute(
+        "DELETE FROM basket_legs WHERE template_id = $1",
+        &[&template_id],
+    )
+    .await?;
     for (i, (market_id, side, weight)) in legs.iter().enumerate() {
         tx.execute(
             "INSERT INTO basket_legs (template_id, market_id, side, weight_bps, position)
@@ -116,8 +120,15 @@ impl LegRow {
     pub fn to_view(&self) -> BasketLegView {
         BasketLegView {
             market_id: self.market_id.clone(),
-            market_title: self.market_title.clone().unwrap_or_else(|| self.market_id.clone()),
-            side: if self.side == "yes" { Side::Yes } else { Side::No },
+            market_title: self
+                .market_title
+                .clone()
+                .unwrap_or_else(|| self.market_id.clone()),
+            side: if self.side == "yes" {
+                Side::Yes
+            } else {
+                Side::No
+            },
             weight_bps: self.weight_bps,
             current_price: self.current_price.clone(),
             close_time: self.close_time,
@@ -202,9 +213,7 @@ pub async fn get_template_by_slug(
 }
 
 /// All published templates (public list), newest first.
-pub async fn list_published(
-    client: &Client,
-) -> Result<Vec<TemplateRow>, tokio_postgres::Error> {
+pub async fn list_published(client: &Client) -> Result<Vec<TemplateRow>, tokio_postgres::Error> {
     let rows = client
         .query(
             "SELECT id, slug, title, description, category, cover_url, status,
@@ -245,9 +254,7 @@ pub async fn set_template_status(
         "closed" => ", closed_at = now()",
         _ => "",
     };
-    let sql = format!(
-        "UPDATE basket_templates SET status = $2{now_setter} WHERE id = $1"
-    );
+    let sql = format!("UPDATE basket_templates SET status = $2{now_setter} WHERE id = $1");
     client.execute(&sql, &[&id, &status]).await?;
     Ok(())
 }
@@ -274,30 +281,44 @@ pub async fn update_template(
                 min_buy_usdc = COALESCE($6, min_buy_usdc),
                 max_buy_usdc = COALESCE($7, max_buy_usdc)
              WHERE id = $1",
-            &[&id, &title, &description, &category, &cover_url, &min_buy_usdc, &max_buy_usdc],
+            &[
+                &id,
+                &title,
+                &description,
+                &category,
+                &cover_url,
+                &min_buy_usdc,
+                &max_buy_usdc,
+            ],
         )
         .await?;
     Ok(())
 }
 
 /// Total USDC bought through a template (filled purchases only).
+/// `sum()` is NULL when nothing was bought yet -> None.
 pub async fn total_bought(
     client: &Client,
     template_id: Uuid,
 ) -> Result<Option<i64>, tokio_postgres::Error> {
     let row = client
         .query_opt(
-            "SELECT sum(amount_usdc) FROM basket_purchases
+            // sum(bigint) is NUMERIC in Postgres; cast back to BIGINT so the
+            // column maps to i64 (NULL stays NULL -> None).
+            "SELECT sum(amount_usdc)::BIGINT FROM basket_purchases
              WHERE template_id = $1 AND status IN ('filled', 'active', 'partially_resolved', 'resolved', 'claimed')",
             &[&template_id],
         )
         .await?;
-    Ok(row.and_then(|r| r.get(0)))
+    // Note the double Option: row may be missing OR the sum may be NULL.
+    // `and_then` peels the row-level Option; the column is Option<i64>.
+    Ok(row.and_then(|r| r.get::<_, Option<i64>>(0)))
 }
 
 // --- Quotes & purchases --------------------------------------------------------
 
 /// Persist a basket quote: per-leg Panta quote details as JSON, plus totals.
+#[allow(clippy::too_many_arguments)] // mirrors the table columns
 pub async fn insert_quote(
     client: &Client,
     template_id: Uuid,
@@ -379,13 +400,7 @@ pub async fn insert_purchase(
                                            fee_usdc, status)
              VALUES ($1, $2, $3, $4, $5, 'built')
              RETURNING id",
-            &[
-                &template_id,
-                &user_id,
-                &quote_id,
-                &amount_usdc,
-                &fee_usdc,
-            ],
+            &[&template_id, &user_id, &quote_id, &amount_usdc, &fee_usdc],
         )
         .await?;
     Ok(row.get(0))
@@ -464,7 +479,7 @@ pub async fn purchase_leg_orders(
         .await?;
     Ok(rows
         .iter()
-        .map(|r| queries::orders::OrderRow {
+        .map(|r| crate::queries::orders::OrderRow {
             id: r.get(0),
             user_id: r.get(1),
             market_id: r.get(2),

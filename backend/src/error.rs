@@ -69,14 +69,14 @@ impl IntoResponse for AppError {
 /// Let handlers use `?` on database errors without leaking internals.
 impl From<tokio_postgres::Error> for AppError {
     fn from(e: tokio_postgres::Error) -> Self {
-        tracing::error!(error = %e, "database error");
+        tracing::error!(error = ?e, "database error");
         AppError::internal("database error")
     }
 }
 
 impl From<deadpool_postgres::PoolError> for AppError {
     fn from(e: deadpool_postgres::PoolError) -> Self {
-        tracing::error!(error = %e, "database pool error");
+        tracing::error!(error = ?e, "database pool error");
         AppError::internal("database unavailable")
     }
 }

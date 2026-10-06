@@ -227,6 +227,175 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         format!("status {}", view["status"]),
     );
 
+    // --- 5. Basket: admin curates, member buys in ONE signature -------------
+    // The smoke wallet must be on ADMIN_WALLETS for curation; otherwise this
+    // section reports how to enable it and skips.
+    let slug = format!(
+        "smoke-basket-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    );
+    let create = call(
+        &http,
+        reqwest::Method::POST,
+        "/v1/admin/baskets",
+        Some(&token),
+        Some(serde_json::json!({
+            "slug": slug,
+            "title": "Smoke Test Basket",
+            "description": "Three-leg basket created by the smoke tool.",
+            "category": "sports",
+            "cover_url": null,
+            "min_buy_usdc": "1000000",
+            "max_buy_usdc": "100000000",
+            "legs": [
+                { "market_id": "mkt_afcon_nigeria_wins_2027", "side": "yes", "weight_bps": 4000 },
+                { "market_id": "mkt_eth_above_5k",           "side": "yes", "weight_bps": 3000 },
+                { "market_id": "mkt_naira_below_1500",        "side": "yes", "weight_bps": 3000 }
+            ]
+        })),
+    )
+    .await?;
+
+    if create.status().as_u16() == 403 {
+        println!(
+            "  [skip] basket flow: add the smoke wallet to ADMIN_WALLETS to enable:\n         ADMIN_WALLETS={wallet}"
+        );
+        println!("\nSMOKE TEST PASSED (baskets skipped)");
+        return Ok(());
+    }
+    check(
+        "admin create basket",
+        create.status().is_success(),
+        format!("status {}", create.status()),
+    );
+    let template: serde_json::Value = create.json().await?;
+    let template_id = template["id"].as_str().unwrap().to_string();
+
+    let resp = call(
+        &http,
+        reqwest::Method::POST,
+        &format!("/v1/admin/baskets/{template_id}/publish"),
+        Some(&token),
+        None,
+    )
+    .await?;
+    check(
+        "admin publish basket",
+        resp.status().is_success(),
+        format!("status {}", resp.status()),
+    );
+
+    // Member views the basket.
+    let resp = call(
+        &http,
+        reqwest::Method::GET,
+        &format!("/v1/baskets/{slug}"),
+        None,
+        None,
+    )
+    .await?;
+    let detail: serde_json::Value = resp.json().await?;
+    check(
+        "basket detail",
+        detail["legs"].as_array().map(Vec::len).unwrap_or(0) == 3,
+        format!(
+            "index price {}",
+            detail["index_price"].as_str().unwrap_or("-")
+        ),
+    );
+
+    // Quote 2 USDC.
+    let resp = call(
+        &http,
+        reqwest::Method::POST,
+        &format!("/v1/baskets/{template_id}/quote"),
+        Some(&token),
+        Some(serde_json::json!({ "amount_usdc": "2000000", "slippage_bps": 150 })),
+    )
+    .await?;
+    check(
+        "basket quote",
+        resp.status().is_success(),
+        format!("status {}", resp.status()),
+    );
+    let quote: serde_json::Value = resp.json().await?;
+    println!(
+        "         basket fee: {} (ours), {} (panta total)",
+        quote["our_fee_usdc"], quote["total_panta_fees_usdc"]
+    );
+    let basket_quote_id = quote["quote_id"].as_str().unwrap().to_string();
+
+    // Build -> ONE transaction for all legs + fee.
+    let resp = call(
+        &http,
+        reqwest::Method::POST,
+        &format!("/v1/baskets/quotes/{basket_quote_id}/build"),
+        Some(&token),
+        None,
+    )
+    .await?;
+    check(
+        "basket build",
+        resp.status().is_success(),
+        format!("status {}", resp.status()),
+    );
+    let built: serde_json::Value = resp.json().await?;
+    assert_eq!(
+        built["transactions"].as_array().map(Vec::len),
+        Some(1),
+        "baskets must be one transaction"
+    );
+    let purchase_id = built["purchase_id"].as_str().unwrap().to_string();
+    let tx_b64 = built["transactions"][0].as_str().unwrap().to_string();
+
+    // Sign and submit.
+    let tx_bytes = base64::engine::general_purpose::STANDARD.decode(&tx_b64)?;
+    let unsigned: VersionedTransaction = bincode::deserialize(&tx_bytes)?;
+    let signed_tx = VersionedTransaction::try_new(unsigned.message, &[&solana_keypair])?;
+    let signed_b64 = base64::engine::general_purpose::STANDARD
+        .encode(bincode::serialize(&signed_tx).expect("serialize signed tx"));
+
+    let resp = call(
+        &http,
+        reqwest::Method::POST,
+        &format!("/v1/baskets/purchases/{purchase_id}/submit"),
+        Some(&token),
+        Some(serde_json::json!({ "signed_txs": [signed_b64] })),
+    )
+    .await?;
+    check(
+        "basket submit",
+        resp.status().is_success(),
+        format!("status {}", resp.status()),
+    );
+
+    // Poll the purchase: every leg must be filled.
+    let resp = call(
+        &http,
+        reqwest::Method::GET,
+        &format!("/v1/baskets/purchases/{purchase_id}"),
+        Some(&token),
+        None,
+    )
+    .await?;
+    let purchase: serde_json::Value = resp.json().await?;
+    let filled = purchase["legs"]
+        .as_array()
+        .map(|legs| legs.iter().all(|l| l["status"] == "filled"))
+        .unwrap_or(false);
+    check(
+        "basket purchase filled",
+        purchase["status"] == "filled" && filled,
+        format!(
+            "status {}, {} legs",
+            purchase["status"],
+            purchase["legs"].as_array().map(Vec::len).unwrap_or(0)
+        ),
+    );
+
     println!("\nSMOKE TEST PASSED");
     Ok(())
 }

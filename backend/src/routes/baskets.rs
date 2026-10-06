@@ -504,15 +504,15 @@ async fn purchase_view(
     let mut leg_views = Vec::with_capacity(orders.len());
     for leg in &orders {
         // Current side price for display.
+        // Current side price for display: pick the leg's side from the row.
         let price = queries::markets::get_market(client, &leg.market_id)
             .await?
             .and_then(|m| {
-                let p = if leg.side == "yes" {
-                    m.yes_price.clone()
+                if leg.side == "yes" {
+                    m.yes_price
                 } else {
-                    m.no_price.clone()
-                };
-                p
+                    m.no_price
+                }
             });
         leg_views.push(PurchaseLegView {
             order_id: leg.id,
