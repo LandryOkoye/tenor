@@ -4,6 +4,7 @@
 //! handlers and worker jobs share the exact same queries. Results are plain
 //! domain or lightweight row structs — no ORM magic.
 
+pub mod baskets;
 pub mod markets;
 pub mod orders;
 pub mod users;

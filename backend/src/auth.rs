@@ -158,6 +158,39 @@ pub fn new_nonce() -> String {
     Uuid::new_v4().to_string()
 }
 
+/// Extractor for admin endpoints: a logged-in user whose wallet is on the
+/// `ADMIN_WALLETS` allowlist (brief §7.9). Non-admin users get a flat 403 —
+/// admin status is not secret, but admin actions are impossible.
+#[derive(Debug, Clone)]
+pub struct AdminUser {
+    pub user: AuthUser,
+}
+
+impl FromRequestParts<AppState> for AdminUser {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        // Reuse the JWT check, then consult the allowlist.
+        let user = AuthUser::from_request_parts(parts, state).await?;
+        if !state
+            .config
+            .admin_wallets
+            .iter()
+            .any(|w| w.eq_ignore_ascii_case(&user.wallet))
+        {
+            return Err(AppError::new(
+                axum::http::StatusCode::FORBIDDEN,
+                "FORBIDDEN",
+                "this wallet is not an admin",
+            ));
+        }
+        Ok(AdminUser { user })
+    }
+}
+
 /// Expiry for a freshly created nonce.
 pub fn nonce_expiry() -> chrono::DateTime<Utc> {
     Utc::now() + Duration::seconds(NONCE_TTL_SECS)
