@@ -118,6 +118,38 @@ impl MockPanta {
         self.positions.lock().await.push((wallet.to_string(), row));
     }
 
+    /// Add `shares` to the wallet's holding of one market+side (top-up on
+    /// repeat buys), creating the row if it does not exist yet.
+    async fn add_shares(&self, wallet: &str, market_id: &str, side: &str, shares: &str) {
+        let mut positions = self.positions.lock().await;
+        if let Some((_, row)) = positions
+            .iter_mut()
+            .find(|(w, row)| w == wallet && row.market_id == market_id && row.side == side)
+        {
+            // Shares are 6-decimal quantities: add in base units, exact math.
+            if let (Ok(total), Ok(add)) =
+                (usdc_human_to_base(&row.shares), usdc_human_to_base(shares))
+            {
+                row.shares = usdc_base_to_human(total + add);
+            }
+            row.claimed = Some(false);
+            return;
+        }
+        positions.push((
+            wallet.to_string(),
+            PositionRow {
+                market_id: market_id.to_string(),
+                category: None,
+                side: side.to_string(),
+                shares: shares.to_string(),
+                phase: Some("primary".to_string()),
+                claimable: false,
+                claimed: Some(false),
+                outcome: None,
+            },
+        ));
+    }
+
     /// Build the structurally-valid mock instruction used by build/claim.
     fn mock_instruction(wallet: &str, tag: &str) -> WireInstruction {
         WireInstruction {
@@ -246,13 +278,40 @@ impl PantaApi for MockPanta {
     }
 
     async fn positions(&self, wallet: &str) -> Result<Vec<PositionRow>, PantaError> {
-        Ok(self
+        let stored: Vec<PositionRow> = self
             .positions
             .lock()
             .await
             .iter()
             .filter(|(w, _)| w == wallet)
             .map(|(_, row)| row.clone())
+            .collect();
+
+        // Enrich with live market state: phase, outcome and claim eligibility
+        // exactly mirror the real endpoint's semantics (brief §4.2).
+        let markets = self.markets.lock().await;
+        Ok(stored
+            .into_iter()
+            .map(|row| {
+                let m = markets.iter().find(|m| m.market_id == row.market_id);
+                let resolved = m.map(|m| m.resolved).unwrap_or(false);
+                let outcome = if resolved {
+                    m.and_then(|m| m.yes_price.as_ref())
+                        .and_then(|p| usdc_human_to_base(p).ok())
+                        .map(|p| if p >= 1_000_000 { "yes" } else { "no" })
+                } else {
+                    None
+                };
+                let side = row.side.clone();
+                PositionRow {
+                    phase: m.and_then(|m| m.phase.clone()).or(row.phase.clone()),
+                    claimable: resolved
+                        && outcome.as_deref() == Some(side.as_str())
+                        && !row.claimed.unwrap_or(false),
+                    outcome: outcome.map(str::to_string),
+                    ..row
+                }
+            })
             .collect())
     }
 
@@ -392,8 +451,17 @@ impl PantaApi for MockPanta {
         order.status = "submitted".into();
 
         // Idempotent like the real endpoint: same orderId+signature is a no-op.
-        let (market_id, side) = (order.quote.market_id.clone(), order.quote.side.clone());
+        let (market_id, side, shares, wallet) = (
+            order.quote.market_id.clone(),
+            order.quote.side.clone(),
+            order.quote.shares.clone(),
+            order.quote.wallet.clone(),
+        );
         drop(orders);
+
+        // The buy lands: the wallet now holds the quoted shares (mock bookkeeping
+        // so the portfolio and claim flows behave like the real indexer).
+        self.add_shares(&wallet, &market_id, &side, &shares).await;
 
         // Simulate the curve moving after a real buy.
         self.nudge_curve(&market_id, &side).await;
@@ -452,6 +520,17 @@ impl PantaApi for MockPanta {
                     PantaError::api("NOT_CLAIMABLE", "no winning shares for this wallet", 400)
                 })?
         };
+
+        // Consume the claim: a built claim cannot be built again (fail closed).
+        {
+            let mut positions = self.positions.lock().await;
+            if let Some((_, row)) = positions
+                .iter_mut()
+                .find(|(w, row)| w == &req.wallet && row.market_id == req.market_id && row.side == winning_side)
+            {
+                row.claimed = Some(true);
+            }
+        }
 
         Ok(ClaimBuildResponse {
             wallet: Some(req.wallet.clone()),
