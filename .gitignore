@@ -21,3 +21,6 @@ frontend/src/api/generated/
 
 # OS / editor
 .DS_Store
+
+# TypeScript incremental build info
+*.tsbuildinfo
