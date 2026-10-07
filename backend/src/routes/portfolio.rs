@@ -12,11 +12,11 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::domain::{
-    ActivityItem, ActivityKind, Portfolio, PortfolioBasket, PortfolioBasketLeg,
-    PortfolioPosition, Side,
+    ActivityItem, ActivityKind, Portfolio, PortfolioBasket, PortfolioBasketLeg, PortfolioPosition,
+    Side,
 };
 use crate::error::AppError;
-use crate::panta::{self, PantaApi};
+use crate::panta;
 use crate::queries;
 use crate::state::AppState;
 
@@ -60,14 +60,19 @@ pub async fn portfolio(
                 .as_deref()
                 .and_then(|p| panta::usdc_human_to_base(p).ok())
                 .unwrap_or(1_000_000);
-            (shares_base * price_base / 1_000_000, side_price.clone())
+            (
+                (shares_base * price_base / 1_000_000).to_string(),
+                side_price.clone(),
+            )
         }
     };
 
     // 4. Basket groupings: orders linked to a purchase, keyed by purchase.
     //    (The smoke flow and the basket endpoints create these links.)
-    let mut basket_orders: std::collections::HashMap<Uuid, Vec<&queries::portfolio::PortfolioOrder>> =
-        std::collections::HashMap::new();
+    let mut basket_orders: std::collections::HashMap<
+        Uuid,
+        Vec<&queries::portfolio::PortfolioOrder>,
+    > = std::collections::HashMap::new();
     for o in &orders {
         if let Some(pid) = o.basket_purchase_id {
             basket_orders.entry(pid).or_default().push(o);
@@ -95,17 +100,27 @@ pub async fn portfolio(
                     modified_outside = true;
                 }
             }
-            let (leg_value, price) = value_of(on_chain.unwrap_or(recorded), leg);
+            let (leg_value, _price) = value_of(on_chain.unwrap_or(recorded), leg);
             let leg_value_i = leg_value.parse::<i64>().unwrap_or(0);
             value += leg_value_i;
-            if leg.status == "resolved_win" || leg.status == "resolved_loss" || leg.status == "claimed" {
+            if leg.status == "resolved_win"
+                || leg.status == "resolved_loss"
+                || leg.status == "claimed"
+            {
                 resolved_count += 1;
             }
             leg_views.push(PortfolioBasketLeg {
                 order_id: leg.id,
                 market_id: leg.market_id.clone(),
-                market_title: leg.market_title.clone().unwrap_or_else(|| leg.market_id.clone()),
-                side: if leg.side == "yes" { Side::Yes } else { Side::No },
+                market_title: leg
+                    .market_title
+                    .clone()
+                    .unwrap_or_else(|| leg.market_id.clone()),
+                side: if leg.side == "yes" {
+                    Side::Yes
+                } else {
+                    Side::No
+                },
                 shares: on_chain.map(|s| s.to_string()),
                 status: parse_leg_status(&leg.status),
                 value_usdc: leg_value_i.to_string(),
@@ -157,7 +172,11 @@ pub async fn portfolio(
         let market_row = queries::markets::get_market(&client, &pos.market_id).await?;
         let (price, resolved, outcome, title) = match market_row {
             Some(m) => (
-                if pos.side == "yes" { m.yes_price } else { m.no_price },
+                if pos.side == "yes" {
+                    m.yes_price
+                } else {
+                    m.no_price
+                },
                 m.resolved,
                 m.outcome,
                 Some(m.title),
@@ -186,8 +205,15 @@ pub async fn portfolio(
         total_value += value_i;
         single_positions.push(PortfolioPosition {
             market_id: pos.market_id.clone(),
-            market_title: pseudo.market_title.clone().unwrap_or_else(|| pos.market_id.clone()),
-            side: if pos.side == "yes" { Side::Yes } else { Side::No },
+            market_title: pseudo
+                .market_title
+                .clone()
+                .unwrap_or_else(|| pos.market_id.clone()),
+            side: if pos.side == "yes" {
+                Side::Yes
+            } else {
+                Side::No
+            },
             shares: shares.to_string(),
             current_price,
             value_usdc: value_i.to_string(),
@@ -220,11 +246,19 @@ pub async fn activity(
     Ok(Json(
         rows.into_iter()
             .map(|r| ActivityItem {
-                kind: if r.kind == "claim" { ActivityKind::Claim } else if r.basket_purchase_id.is_some() { ActivityKind::BasketBuy } else { ActivityKind::Buy },
+                kind: if r.kind == "claim" {
+                    ActivityKind::Claim
+                } else if r.basket_purchase_id.is_some() {
+                    ActivityKind::BasketBuy
+                } else {
+                    ActivityKind::Buy
+                },
                 market_id: Some(r.market_id),
                 market_title: r.market_title,
                 basket_purchase_id: r.basket_purchase_id,
-                side: r.side.map(|s| if s == "yes" { Side::Yes } else { Side::No }),
+                side: r
+                    .side
+                    .map(|s| if s == "yes" { Side::Yes } else { Side::No }),
                 amount_usdc: r.amount_usdc.to_string(),
                 tx_signature: r.tx_signature,
                 ts: r.created_at,

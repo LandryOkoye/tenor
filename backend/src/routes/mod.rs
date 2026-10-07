@@ -5,9 +5,12 @@
 pub mod admin;
 pub mod auth;
 pub mod baskets;
+pub mod claims;
 pub mod health;
 pub mod markets;
 pub mod orders;
+pub mod portfolio;
+pub mod resolution;
 
 use axum::routing::{get, post};
 use axum::Router;
@@ -50,6 +53,22 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/baskets/purchases/{id}/submit", post(baskets::submit))
         .route("/v1/baskets/purchases/{id}", get(baskets::purchase_status));
 
+    // Portfolio + claims (session).
+    let portfolio_routes = Router::new()
+        .route("/v1/portfolio", get(portfolio::portfolio))
+        .route("/v1/portfolio/activity", get(portfolio::activity))
+        .route("/v1/claims/build", post(claims::build))
+        .route("/v1/claims/submit", post(claims::submit));
+
+    // Resolution Center (public reads; APP analysis clearly labelled).
+    let resolution_routes = Router::new()
+        .route("/v1/resolution/markets", get(resolution::markets))
+        .route("/v1/resolution/markets/{id}", get(resolution::detail))
+        .route(
+            "/v1/resolution/creators/{creator}",
+            get(resolution::creator),
+        );
+
     // Admin curation (AdminUser extractor: JWT + wallet allowlist).
     let admin_routes = Router::new()
         .route("/v1/admin/panta-markets", get(admin::search_markets))
@@ -66,6 +85,8 @@ pub fn router(state: AppState) -> Router {
         .merge(market_routes)
         .merge(order_routes)
         .merge(basket_routes)
+        .merge(portfolio_routes)
+        .merge(resolution_routes)
         .merge(admin_routes)
         .with_state(state)
 }

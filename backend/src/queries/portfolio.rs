@@ -138,7 +138,11 @@ pub async fn activity(
     Ok(rows
         .iter()
         .map(|r| ActivityRow {
-            kind: if r.get::<_, String>(0) == "claim" { "claim" } else { "buy" },
+            kind: if r.get::<_, String>(0) == "claim" {
+                "claim"
+            } else {
+                "buy"
+            },
             market_id: r.get(1),
             market_title: r.get(2),
             side: r.get(3),

@@ -7,7 +7,7 @@ use std::str::FromStr;
 use crate::auth::AuthUser;
 use crate::domain::{ClaimsBuildRequest, ClaimsBuildResponse, ClaimsSubmitResponse, TxSummary};
 use crate::error::AppError;
-use crate::panta::{self, PantaApi};
+use crate::panta;
 use crate::queries;
 use crate::routes::orders::encode_tx;
 use crate::state::AppState;
@@ -53,10 +53,8 @@ pub async fn build(
                 market_id: market_id.clone(),
             })
             .await?;
-        total_claimable += panta::usdc_human_to_base(
-            claim.winning_shares.as_deref().unwrap_or("0"),
-        )
-        .unwrap_or(0); // ≈ 1 USDC per winning share
+        total_claimable +=
+            panta::usdc_human_to_base(claim.winning_shares.as_deref().unwrap_or("0")).unwrap_or(0); // ≈ 1 USDC per winning share
         let mut ixs = Vec::with_capacity(claim.instructions.len());
         for wire in &claim.instructions {
             ixs.push(crate::solana_tx::SolanaCtx::parse_wire_instruction(wire)?);
@@ -67,7 +65,10 @@ pub async fn build(
     // 3. One transaction, no our-fee (claims pay nothing to us), simulate it.
     let payer = solana_sdk::pubkey::Pubkey::from_str(&user.wallet)
         .map_err(|_| AppError::bad_request("INVALID_WALLET", "wallet is not a valid pubkey"))?;
-    let tx = state.solana.assemble(&payer, instruction_sets, None, 200_000).await?;
+    let tx = state
+        .solana
+        .assemble(&payer, instruction_sets, None, 200_000)
+        .await?;
     state.solana.validate(&tx, &payer, None)?;
     state.solana.simulate(&tx).await?;
 
@@ -105,8 +106,9 @@ pub async fn submit(
 
     // 1. Decode, broadcast, confirm.
     let signed: solana_sdk::transaction::VersionedTransaction =
-        bincode::deserialize(&decode_b64(&req.signed_txs[0])?)
-            .map_err(|_| AppError::bad_request("INVALID_TX", "signed transaction could not be decoded"))?;
+        bincode::deserialize(&decode_b64(&req.signed_txs[0])?).map_err(|_| {
+            AppError::bad_request("INVALID_TX", "signed transaction could not be decoded")
+        })?;
     let signature = state.solana.broadcast_and_confirm(&signed).await?;
 
     // 2. Which markets were claimed? Whatever the wallet held claimable.

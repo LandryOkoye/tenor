@@ -28,11 +28,15 @@ pub async fn markets_by_status(
 ) -> Result<Vec<ResolutionRow>, tokio_postgres::Error> {
     // Whitelist bucket -> SQL predicate (user input never enters the SQL).
     let predicate = match status {
-        "resolving_soon" => "m.phase <> 'resolved' AND m.resolved = false
-                             AND m.resolve_time <= now() + interval '48 hours'",
+        "resolving_soon" => {
+            "m.phase <> 'resolved' AND m.resolved = false
+                             AND m.resolve_time <= now() + interval '48 hours'"
+        }
         "resolved" => "m.resolved = true",
-        "delayed" => "m.phase <> 'resolved' AND m.resolved = false
-                     AND m.resolve_time < now()",
+        "delayed" => {
+            "m.phase <> 'resolved' AND m.resolved = false
+                     AND m.resolve_time < now()"
+        }
         _ => "false", // unknown bucket -> empty result, never an error
     };
     let sql = format!(

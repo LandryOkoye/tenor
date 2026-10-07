@@ -104,6 +104,8 @@ pub struct MarketRecord {
     pub volume: Option<i64>,
     pub image_url: Option<String>,
     pub updated_at: DateTime<Utc>,
+    pub resolved: bool,
+    pub outcome: Option<String>,
 }
 
 /// Read one market row by Panta market id.
@@ -114,7 +116,7 @@ pub async fn get_market(
     let row = client
         .query_opt(
             "SELECT id, title, category, phase, status, close_time, resolve_time,
-                    yes_price, no_price, volume, image_url, updated_at
+                    yes_price, no_price, volume, image_url, updated_at, resolved, outcome
              FROM markets WHERE id = $1",
             &[&market_id],
         )
@@ -132,6 +134,8 @@ pub async fn get_market(
         volume: r.get(9),
         image_url: r.get(10),
         updated_at: r.get(11),
+        resolved: r.get(12),
+        outcome: r.get(13),
     }))
 }
 
@@ -209,6 +213,8 @@ pub async fn list_markets(
                 volume: r.get(9),
                 image_url: r.get(10),
                 updated_at: r.get(11),
+                resolved: false, // not needed by list views
+                outcome: None,
             }
             .to_summary()
         })
@@ -332,6 +338,8 @@ pub async fn market_detail(
         volume: row.get(9),
         image_url: row.get(10),
         updated_at: row.get(11),
+        resolved: false, // not needed by the detail view
+        outcome: None,
     };
 
     Ok(Some(crate::domain::MarketDetail {

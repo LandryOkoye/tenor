@@ -524,10 +524,9 @@ impl PantaApi for MockPanta {
         // Consume the claim: a built claim cannot be built again (fail closed).
         {
             let mut positions = self.positions.lock().await;
-            if let Some((_, row)) = positions
-                .iter_mut()
-                .find(|(w, row)| w == &req.wallet && row.market_id == req.market_id && row.side == winning_side)
-            {
+            if let Some((_, row)) = positions.iter_mut().find(|(w, row)| {
+                w == &req.wallet && row.market_id == req.market_id && row.side == winning_side
+            }) {
                 row.claimed = Some(true);
             }
         }

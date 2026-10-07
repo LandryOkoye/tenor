@@ -7,4 +7,6 @@
 pub mod baskets;
 pub mod markets;
 pub mod orders;
+pub mod portfolio;
+pub mod resolution;
 pub mod users;
