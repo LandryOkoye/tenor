@@ -306,7 +306,7 @@ impl PantaApi for MockPanta {
                 PositionRow {
                     phase: m.and_then(|m| m.phase.clone()).or(row.phase.clone()),
                     claimable: resolved
-                        && outcome.as_deref() == Some(side.as_str())
+                        && outcome == Some(side.as_str())
                         && !row.claimed.unwrap_or(false),
                     outcome: outcome.map(str::to_string),
                     ..row

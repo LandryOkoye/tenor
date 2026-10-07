@@ -396,6 +396,97 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
     );
 
+    // --- 6. Portfolio + activity --------------------------------------------
+    let resp = call(
+        &http,
+        reqwest::Method::GET,
+        "/v1/portfolio",
+        Some(&token),
+        None,
+    )
+    .await?;
+    let pf: serde_json::Value = resp.json().await?;
+    let basket_count = pf["baskets"].as_array().map(Vec::len).unwrap_or(0);
+    let total = pf["total_value_usdc"]
+        .as_str()
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0);
+    check(
+        "portfolio",
+        basket_count >= 1 && total > 0,
+        format!("{basket_count} baskets, total value {total} base"),
+    );
+    println!(
+        "         basket: cost {} value {} pnl {}",
+        pf["baskets"][0]["cost_basis_usdc"],
+        pf["baskets"][0]["current_value_usdc"],
+        pf["baskets"][0]["unrealized_pnl_usdc"],
+    );
+
+    let resp = call(
+        &http,
+        reqwest::Method::GET,
+        "/v1/portfolio/activity",
+        Some(&token),
+        None,
+    )
+    .await?;
+    let act: serde_json::Value = resp.json().await?;
+    let n = act.as_array().map(Vec::len).unwrap_or(0);
+    check("portfolio activity", n >= 2, format!("{n} items"));
+
+    // --- 7. Resolution Center -------------------------------------------------
+    let resp = call(
+        &http,
+        reqwest::Method::GET,
+        "/v1/resolution/markets?status=resolved",
+        None,
+        None,
+    )
+    .await?;
+    let resolved: serde_json::Value = resp.json().await?;
+    let n = resolved.as_array().map(Vec::len).unwrap_or(0);
+    check(
+        "resolution: resolved list",
+        n >= 1,
+        format!("{n} resolved markets"),
+    );
+
+    let resp = call(
+        &http,
+        reqwest::Method::GET,
+        &format!("/v1/resolution/markets/{market_id}"),
+        None,
+        None,
+    )
+    .await?;
+    let rdetail: serde_json::Value = resp.json().await?;
+    let timeline_len = rdetail["timeline"].as_array().map(Vec::len).unwrap_or(0);
+    check(
+        "resolution: market timeline",
+        timeline_len >= 1,
+        format!("{timeline_len} events"),
+    );
+
+    // --- 8. Claims: nothing claimable in this run (all buys on open markets)
+    // The positive claim path is covered by unit tests; here we assert the
+    // honest negative: the API refuses to build claims with nothing to claim.
+    let resp = call(
+        &http,
+        reqwest::Method::POST,
+        "/v1/claims/build",
+        Some(&token),
+        Some(serde_json::json!({ "market_ids": [] })),
+    )
+    .await?;
+    let status = resp.status();
+    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    check(
+        "claims: nothing claimable (all buys on open markets)",
+        status.as_u16() == 400 && body["error"]["code"] == "NOTHING_CLAIMABLE",
+        format!("status {status} code {}", body["error"]["code"]),
+    );
+
     println!("\nSMOKE TEST PASSED");
     Ok(())
 }

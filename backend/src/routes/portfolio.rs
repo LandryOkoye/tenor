@@ -1,9 +1,10 @@
 //! Portfolio endpoints (brief §7.6, §9): positions, baskets, P&L, activity.
 //!
 //! Data sources are merged honestly:
-//! - WHAT the wallet holds comes from Panta positions (the chain is truth)
-//! - WHAT it cost comes from our orders
-//! - WHAT it's worth comes from our cached market prices
+//!   - WHAT the wallet holds comes from Panta positions (the chain is truth)
+//!   - WHAT it cost comes from our orders
+//!   - WHAT it's worth comes from our cached market prices
+//!
 //! If the wallet's shares no longer match what we recorded, the basket is
 //! flagged "modified outside APP" (brief §7.6).
 
