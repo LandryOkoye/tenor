@@ -1,7 +1,6 @@
 //! `POST /v1/auth/nonce` and `POST /v1/auth/verify` (SIWS login).
 
 use axum::{extract::State, Json};
-use chrono::{DateTime, Utc};
 
 use crate::auth;
 use crate::domain::{NonceRequest, NonceResponse, VerifyRequest, VerifyResponse};
@@ -17,7 +16,10 @@ pub async fn nonce(
 ) -> Result<Json<NonceResponse>, AppError> {
     // Basic sanity: a Solana pubkey is base58; reject obviously bad input.
     if bs58::decode(&req.wallet).into_vec().is_err() {
-        return Err(AppError::bad_request("INVALID_WALLET", "wallet is not valid base58"));
+        return Err(AppError::bad_request(
+            "INVALID_WALLET",
+            "wallet is not valid base58",
+        ));
     }
 
     let nonce = auth::new_nonce();
@@ -56,7 +58,10 @@ pub async fn verify(
 
     // 3. Consume the nonce exactly once (prevents replay).
     if !queries::users::consume_nonce(&client, &nonce).await? {
-        return Err(AppError::bad_request("NONCE_ALREADY_USED", "login nonce already used"));
+        return Err(AppError::bad_request(
+            "NONCE_ALREADY_USED",
+            "login nonce already used",
+        ));
     }
 
     // 4. Upsert the user and mint the session token.
@@ -64,8 +69,5 @@ pub async fn verify(
     let (token, expires_at) = auth::mint_token(&state.config.jwt_secret, user_id, &req.wallet)?;
 
     tracing::info!(wallet = %req.wallet, "wallet login verified");
-    Ok(Json(VerifyResponse {
-        token,
-        expires_at: DateTime::<Utc>::from(expires_at),
-    }))
+    Ok(Json(VerifyResponse { token, expires_at }))
 }

@@ -7,15 +7,17 @@
 
 use std::collections::HashMap;
 
-use axum::{extract::{Path, Query, State}, Json};
-use chrono::{DateTime, Utc};
+use axum::{
+    extract::{Path, Query, State},
+    Json,
+};
+use chrono::{TimeZone, Utc};
 use tokio::sync::Mutex;
 
 use crate::domain::{
-    Category, MarketDetail, MarketHistory, MarketSummary, MarketTrade, Page, MarketsQuery,
+    Category, MarketDetail, MarketHistory, MarketSummary, MarketTrade, MarketsQuery, Page,
 };
 use crate::error::AppError;
-use crate::panta::PantaApi;
 use crate::queries;
 use crate::state::AppState;
 
@@ -33,7 +35,14 @@ pub async fn categories(State(state): State<AppState>) -> Result<Json<Vec<Catego
     // Fresh enough? Serve from memory.
     if let Some((fetched_at, cats)) = guard.as_ref() {
         if fetched_at.elapsed() < CATEGORY_CACHE_TTL.to_std().unwrap() {
-            return Ok(Json(cats.iter().map(|c| Category { id: c.clone(), name: c.clone() }).collect()));
+            return Ok(Json(
+                cats.iter()
+                    .map(|c| Category {
+                        id: c.clone(),
+                        name: c.clone(),
+                    })
+                    .collect(),
+            ));
         }
     }
 
@@ -43,7 +52,10 @@ pub async fn categories(State(state): State<AppState>) -> Result<Json<Vec<Catego
 
     Ok(Json(
         cats.into_iter()
-            .map(|c| Category { id: c.clone(), name: c })
+            .map(|c| Category {
+                id: c.clone(),
+                name: c,
+            })
             .collect(),
     ))
 }
@@ -51,7 +63,7 @@ pub async fn categories(State(state): State<AppState>) -> Result<Json<Vec<Catego
 /// Pull up to N pages of 50 markets from Panta and upsert them into the DB.
 /// Used by the bootstrap path in `list` and by the worker's sync job later.
 pub async fn sync_first_pages(state: &AppState, pages: usize) -> Result<usize, AppError> {
-    let mut client = state.db.get().await?;
+    let client = state.db.get().await?;
     let mut cursor: Option<String> = None;
     let mut written = 0usize;
 
@@ -81,7 +93,7 @@ pub async fn sync_first_pages(state: &AppState, pages: usize) -> Result<usize, A
 /// `GET /v1/markets` — browse/search/sort the local catalog cache.
 pub async fn list(
     State(state): State<AppState>,
-    Query(q): Json<MarketsQuery>,
+    Query(q): Query<MarketsQuery>,
 ) -> Result<Json<Page<MarketSummary>>, AppError> {
     let mut client = state.db.get().await?;
 
@@ -127,7 +139,7 @@ pub async fn detail(
     State(state): State<AppState>,
     Path(market_id): Path<String>,
 ) -> Result<Json<MarketDetail>, AppError> {
-    let mut client = state.db.get().await?;
+    let client = state.db.get().await?;
 
     if let Some(detail) = queries::markets::market_detail(&client, &market_id).await? {
         return Ok(Json(detail));
@@ -137,7 +149,7 @@ pub async fn detail(
     let row = state.panta.get_market(&market_id).await?;
     queries::markets::upsert_market(&client, &row).await?;
     drop(client);
-    let mut client = state.db.get().await?;
+    let client = state.db.get().await?;
     queries::markets::market_detail(&client, &market_id)
         .await?
         .map(Json)
@@ -186,7 +198,7 @@ pub async fn trades(
                     t.fee_paid.as_ref().map(|v| v.as_str()),
                 );
                 // The "side" of a tape row: whichever share amount is nonzero.
-                let side = match (yes_amount, no_amount) {
+                let side = match (&yes_amount, &no_amount) {
                     (Some(_), None) => Some(crate::domain::Side::Yes),
                     (None, Some(_)) => Some(crate::domain::Side::No),
                     _ => None,
@@ -197,7 +209,9 @@ pub async fn trades(
                     amount_usdc: fee_paid.map(|f| f.to_string()),
                     shares: yes_amount.or(no_amount).map(|s| s.to_string()),
                     price: None, // Panta's tape has amounts, not per-trade prices
-                    ts: t.block_time.and_then(|s| chrono::Utc.timestamp_opt(s, 0).single()),
+                    ts: t
+                        .block_time
+                        .and_then(|s| chrono::Utc.timestamp_opt(s, 0).single()),
                 }
             })
             .collect(),

@@ -28,16 +28,16 @@ pub fn router(state: AppState) -> Router {
     let market_routes = Router::new()
         .route("/v1/categories", get(markets::categories))
         .route("/v1/markets", get(markets::list))
-        .route("/v1/markets/:id", get(markets::detail))
-        .route("/v1/markets/:id/history", get(markets::history))
-        .route("/v1/markets/:id/trades", get(markets::trades));
+        .route("/v1/markets/{id}", get(markets::detail))
+        .route("/v1/markets/{id}/history", get(markets::history))
+        .route("/v1/markets/{id}/trades", get(markets::trades));
 
     // Single-market trading (session required via AuthUser extractor).
     let order_routes = Router::new()
         .route("/v1/orders/quote", post(orders::quote))
-        .route("/v1/orders/:id/build", post(orders::build))
-        .route("/v1/orders/:id/submit", post(orders::submit))
-        .route("/v1/orders/:id", get(orders::status));
+        .route("/v1/orders/{id}/build", post(orders::build))
+        .route("/v1/orders/{id}/submit", post(orders::submit))
+        .route("/v1/orders/{id}", get(orders::status));
 
     health_routes
         .merge(auth_routes)

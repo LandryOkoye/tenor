@@ -13,8 +13,8 @@ pub async fn insert_order(
     client: &Client,
     user_id: Uuid,
     market_id: &str,
-    side: &str, // "yes" | "no"
-    amount_usdc: i64,       // base units
+    side: &str,                   // "yes" | "no"
+    amount_usdc: i64,             // base units
     expected_shares: Option<i64>, // base units
     panta_quote_id: &str,
 ) -> Result<Uuid, tokio_postgres::Error> {

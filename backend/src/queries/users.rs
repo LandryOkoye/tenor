@@ -5,10 +5,7 @@ use tokio_postgres::Client;
 use uuid::Uuid;
 
 /// Insert the user if new, refresh last_seen_at if returning. Returns user id.
-pub async fn upsert_user(
-    client: &Client,
-    wallet: &str,
-) -> Result<Uuid, tokio_postgres::Error> {
+pub async fn upsert_user(client: &Client, wallet: &str) -> Result<Uuid, tokio_postgres::Error> {
     let row = client
         .query_one(
             "INSERT INTO users (wallet_pubkey)
@@ -59,10 +56,7 @@ pub async fn find_live_nonce(
 
 /// Atomically consume a nonce: only succeeds if it was still unused.
 /// Returns true when the nonce is now consumed by this call.
-pub async fn consume_nonce(
-    client: &Client,
-    nonce: &str,
-) -> Result<bool, tokio_postgres::Error> {
+pub async fn consume_nonce(client: &Client, nonce: &str) -> Result<bool, tokio_postgres::Error> {
     let n = client
         .execute(
             "UPDATE auth_nonces SET used_at = now()

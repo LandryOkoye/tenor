@@ -12,10 +12,7 @@
 //!
 //! We never see or store private keys; we only verify signatures.
 
-use axum::{
-    extract::FromRequestParts,
-    http::request::Parts,
-};
+use axum::{extract::FromRequestParts, http::request::Parts};
 use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
@@ -89,20 +86,25 @@ pub fn verify_wallet_signature(
         .map_err(|_| AppError::bad_request("INVALID_SIGNATURE", "signature is not valid base58"))?;
 
     if pubkey_bytes.len() != 32 {
-        return Err(AppError::bad_request("INVALID_WALLET", "wallet must be a 32-byte pubkey"));
+        return Err(AppError::bad_request(
+            "INVALID_WALLET",
+            "wallet must be a 32-byte pubkey",
+        ));
     }
     if sig_bytes.len() != 64 {
-        return Err(AppError::bad_request("INVALID_SIGNATURE", "signature must be 64 bytes"));
+        return Err(AppError::bad_request(
+            "INVALID_SIGNATURE",
+            "signature must be 64 bytes",
+        ));
     }
 
     // ed25519 verify: the only cryptographic trust decision in the app.
-    let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&pubkey_bytes)
-        .map_err(|_| AppError::bad_request("INVALID_WALLET", "wallet bytes are not a valid ed25519 key"))?;
-    let sig = ed25519_dalek::Signature::from_bytes(
-        &sig_bytes
-            .try_into()
-            .expect("length checked above"),
-    );
+    let key_bytes: [u8; 32] = pubkey_bytes.try_into().expect("length checked above");
+    let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&key_bytes).map_err(|_| {
+        AppError::bad_request("INVALID_WALLET", "wallet bytes are not a valid ed25519 key")
+    })?;
+    let sig =
+        ed25519_dalek::Signature::from_bytes(&sig_bytes.try_into().expect("length checked above"));
     verifying_key
         .verify(message.as_bytes(), &sig)
         .map_err(|_| AppError::unauthorized("signature does not match this wallet"))
@@ -164,14 +166,14 @@ pub fn nonce_expiry() -> chrono::DateTime<Utc> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::SigningKey;
-    use rand::rngs::OsRng;
+    use ed25519_dalek::Signer;
 
     /// Signature round-trip: a real ed25519 signature over the SIWS message
     /// verifies; a tampered message does not.
     #[test]
     fn signature_verification_round_trip() {
-        let key = SigningKey::generate(&mut OsRng);
+        // Deterministic key from a fixed seed — no RNG dependency needed.
+        let key = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
         let wallet = bs58::encode(key.verifying_key().as_bytes()).into_string();
         let message = sign_in_message(&wallet, "nonce-123");
 

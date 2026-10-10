@@ -4,16 +4,24 @@
 //! Fees: single-market buys carry 0 bps of our fee in the MVP (frozen
 //! decision in the build plan); the user only pays Panta's protocol fee.
 
-use axum::{extract::{Path, State}, Json};
-use chrono::{DateTime, Utc};
+use std::str::FromStr;
+
+use axum::{
+    extract::{Path, State},
+    Json,
+};
+use chrono::Utc;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
-use crate::domain::{self, BuildResponse, OrderQuote, OrderQuoteRequest, OrderStatus, OrderView, Side, SubmitRequest, TxSummary};
+use crate::domain::{
+    BuildResponse, OrderQuote, OrderQuoteRequest, OrderStatus, OrderView, Side, SubmitRequest,
+    TxSummary,
+};
 use crate::error::AppError;
-use crate::panta::{self, PantaApi};
+use crate::panta;
 use crate::queries;
-use crate::solana_tx::{self, SolanaCtx, TxError};
+use crate::solana_tx::{SolanaCtx, TxError};
 use crate::state::AppState;
 
 /// Sanity bounds on a single buy (base units): 0.01 USDC ..= 1,000 USDC.
@@ -44,10 +52,12 @@ pub async fn quote(
     Json(req): Json<OrderQuoteRequest>,
 ) -> Result<Json<OrderQuote>, AppError> {
     // 1. Validate input before it leaves the app.
-    let amount = req
-        .amount_usdc
-        .parse::<i64>()
-        .map_err(|_| AppError::bad_request("INVALID_AMOUNT", "amount must be an integer string of base units"))?;
+    let amount = req.amount_usdc.parse::<i64>().map_err(|_| {
+        AppError::bad_request(
+            "INVALID_AMOUNT",
+            "amount must be an integer string of base units",
+        )
+    })?;
     if !(MIN_ORDER_BASE..=MAX_ORDER_BASE).contains(&amount) {
         return Err(AppError::bad_request(
             "AMOUNT_OUT_OF_RANGE",
@@ -69,11 +79,12 @@ pub async fn quote(
 
     // 3. Persist as an order row (status = quoted). Our order id is what the
     //    frontend uses; Panta's quoteId is kept server-side.
-    let shares_base = panta::usdc_human_to_base(&quote.shares)
-        .map_err(|e| AppError::internal(format!("panta returned an unparseable share count: {e}")))?;
+    let shares_base = panta::usdc_human_to_base(&quote.shares).map_err(|e| {
+        AppError::internal(format!("panta returned an unparseable share count: {e}"))
+    })?;
     let fee_base = panta::usdc_human_to_base(&quote.fee_usdc).unwrap_or(0);
 
-    let mut client = state.db.get().await?;
+    let client = state.db.get().await?;
     let order_id = queries::orders::insert_order(
         &client,
         user.user_id,
@@ -110,14 +121,17 @@ pub async fn build(
     Path(quote_id): Path<String>,
 ) -> Result<Json<BuildResponse>, AppError> {
     let order_id = parse_order_id(&quote_id)?;
-    let mut client = state.db.get().await?;
+    let client = state.db.get().await?;
 
     // 1. Load the order and enforce ownership + state.
     let order = load_owned_order(&client, order_id, user.user_id).await?;
     if order.status != "quoted" {
         return Err(AppError::bad_request(
             "ORDER_NOT_QUOTED",
-            format!("order is in status '{0}', only quoted orders can be built", order.status),
+            format!(
+                "order is in status '{0}', only quoted orders can be built",
+                order.status
+            ),
         ));
     }
     let panta_quote_id = order
@@ -182,7 +196,9 @@ pub async fn build(
         order_id,
         transactions: vec![tx_base64],
         summary,
-        expires_at: built.expires_at.unwrap_or_else(|| Utc::now() + chrono::Duration::seconds(60)),
+        expires_at: built
+            .expires_at
+            .unwrap_or_else(|| Utc::now() + chrono::Duration::seconds(60)),
     }))
 }
 
@@ -199,7 +215,7 @@ pub async fn submit(
     Json(req): Json<SubmitRequest>,
 ) -> Result<Json<OrderView>, AppError> {
     let order_id = parse_order_id(&order_id_path)?;
-    let mut client = state.db.get().await?;
+    let client = state.db.get().await?;
 
     // 1. Load + ownership + state.
     let order = load_owned_order(&client, order_id, user.user_id).await?;
@@ -223,8 +239,9 @@ pub async fn submit(
 
     // 2. Deserialize the signed transaction (user's wallet filled the sigs).
     let signed: solana_sdk::transaction::VersionedTransaction =
-        bincode::deserialize(&decode_b64(&req.signed_txs[0])?)
-            .map_err(|_| AppError::bad_request("INVALID_TX", "signed transaction could not be decoded"))?;
+        bincode::deserialize(&decode_b64(&req.signed_txs[0])?).map_err(|_| {
+            AppError::bad_request("INVALID_TX", "signed transaction could not be decoded")
+        })?;
 
     // 3. Broadcast through our RPC and wait for confirmation.
     let signature = state.solana.broadcast_and_confirm(&signed).await?;
@@ -307,17 +324,25 @@ async fn load_owned_order(
 pub fn encode_tx(tx: &solana_sdk::transaction::VersionedTransaction) -> Result<String, AppError> {
     let bytes = bincode::serialize(tx)
         .map_err(|e| AppError::internal(format!("could not serialize transaction: {e}")))?;
-    Ok(base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes))
+    Ok(base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        bytes,
+    ))
 }
 
 fn decode_b64(s: &str) -> Result<Vec<u8>, AppError> {
+    use base64::Engine;
     base64::engine::general_purpose::STANDARD
         .decode(s)
         .map_err(|_| AppError::bad_request("INVALID_TX", "transaction is not valid base64"))
 }
 
 /// DB row -> API view.
-async fn order_view(order_id: Uuid, user_id: Uuid, client: &deadpool_postgres::Client) -> Result<OrderView, AppError> {
+async fn order_view(
+    order_id: Uuid,
+    user_id: Uuid,
+    client: &deadpool_postgres::Client,
+) -> Result<OrderView, AppError> {
     let order = queries::orders::get_order(client, order_id)
         .await?
         .filter(|o| o.user_id == user_id)
@@ -347,7 +372,11 @@ pub fn tx_error_to_app(e: TxError) -> AppError {
         TxError::Validation(_) => AppError::bad_request("TX_VALIDATION_FAILED", e.to_string()),
         TxError::Simulation(_) => AppError::bad_request("SIMULATION_FAILED", e.to_string()),
         TxError::Invalid(_) => AppError::bad_request("INVALID_TX", e.to_string()),
-        TxError::Rpc(_) => AppError::new(axum::http::StatusCode::BAD_GATEWAY, "RPC_UNAVAILABLE", e.to_string()),
+        TxError::Rpc(_) => AppError::new(
+            axum::http::StatusCode::BAD_GATEWAY,
+            "RPC_UNAVAILABLE",
+            e.to_string(),
+        ),
         TxError::Expired | TxError::NotConfirmed => AppError::new(
             axum::http::StatusCode::GATEWAY_TIMEOUT,
             "TX_CONFIRM_TIMEOUT",
@@ -387,8 +416,13 @@ mod tests {
             .assemble_with_blockhash(
                 &user,
                 vec![vec![solana_sdk::instruction::Instruction {
-                    program_id: solana_sdk::pubkey::Pubkey::from_str(solana_tx::SYSTEM_PROGRAM).unwrap(),
-                    accounts: vec![solana_sdk::instruction::AccountMeta::new_readonly(user, true)],
+                    program_id: solana_sdk::pubkey::Pubkey::from_str(
+                        crate::solana_tx::SYSTEM_PROGRAM,
+                    )
+                    .unwrap(),
+                    accounts: vec![solana_sdk::instruction::AccountMeta::new_readonly(
+                        user, true,
+                    )],
                     data: vec![1],
                 }]],
                 None,
@@ -398,7 +432,10 @@ mod tests {
             .unwrap();
 
         let b64 = encode_tx(&tx).unwrap();
-        let bytes = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+        use base64::Engine;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .unwrap();
         let back: solana_sdk::transaction::VersionedTransaction =
             bincode::deserialize(&bytes).unwrap();
         assert_eq!(back.message.hash(), tx.message.hash());

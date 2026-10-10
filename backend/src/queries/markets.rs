@@ -30,8 +30,10 @@ pub async fn upsert_market(
         .execute(
             "INSERT INTO markets (id, title, category, phase, status, close_time,
                                   resolve_time, resolved_at, outcome, creator, oracle,
-                                  rules_text, image_url, raw_json, volume, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now())
+                                  rules_text, image_url, raw_json, volume, yes_price, no_price,
+                                  updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+                     now())
              ON CONFLICT (id) DO UPDATE SET
                 title = EXCLUDED.title,
                 category = EXCLUDED.category,
@@ -47,6 +49,8 @@ pub async fn upsert_market(
                 image_url = EXCLUDED.image_url,
                 raw_json = EXCLUDED.raw_json,
                 volume = EXCLUDED.volume,
+                yes_price = EXCLUDED.yes_price,
+                no_price = EXCLUDED.no_price,
                 updated_at = now()",
             &[
                 &m.market_id,
@@ -74,6 +78,8 @@ pub async fn upsert_market(
                 &m.images.first().cloned(),
                 &serde_json::to_value(m).unwrap_or(serde_json::Value::Null),
                 &volume_base,
+                &m.yes_price,
+                &m.no_price,
             ],
         )
         .await?;
@@ -81,7 +87,7 @@ pub async fn upsert_market(
 }
 
 /// A market row as stored locally (subset of columns we serve).
-struct MarketRecord {
+pub struct MarketRecord {
     id: String,
     title: String,
     category: Option<String>,
@@ -180,10 +186,7 @@ pub async fn list_markets(
     );
 
     let rows = client
-        .query(
-            &sql,
-            &[&q, &category, &(limit as i64), &(offset as i64)],
-        )
+        .query(&sql, &[&q, &category, &(limit as i64), &(offset as i64)])
         .await?;
 
     let items: Vec<MarketSummary> = rows
@@ -218,7 +221,9 @@ pub async fn list_markets(
 
 /// How many markets do we have locally? (Used to decide bootstrap sync.)
 pub async fn count(client: &Client) -> Result<i64, tokio_postgres::Error> {
-    let row = client.query_one("SELECT count(*) FROM markets", &[]).await?;
+    let row = client
+        .query_one("SELECT count(*) FROM markets", &[])
+        .await?;
     Ok(row.get(0))
 }
 

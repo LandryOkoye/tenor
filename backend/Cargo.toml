@@ -19,9 +19,9 @@ futures = "0.3"
 
 # --- PostgreSQL: plain driver + a small connection pool (no ORM) ---
 # with-chrono / with-serde_json enable DateTime + JSONB column conversions.
-tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-serde_json-1"] }
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1"] }
 deadpool-postgres = "0.14"
-postgres-types = { version = "0.2", features = ["with-chrono-0_4", "with-serde_json-1"] }
+postgres-types = { version = "0.2", features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1"] }
 
 # --- HTTP client for Panta / Solana ---
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip"] }

@@ -249,7 +249,8 @@ impl SolanaCtx {
     /// when `fee_base` is set — our fee transfer as the last instruction.
     ///
     /// Returns the transaction with **zeroed signatures**: the user's wallet
-    /// fills them in when signing. Fetches a fresh blockhash from our RPC.
+    /// fills them in when signing. Fetches a fresh blockhash from our RPC
+    /// (mock mode uses a zero blockhash so dev works offline).
     pub async fn assemble(
         &self,
         payer: &Pubkey,
@@ -257,12 +258,14 @@ impl SolanaCtx {
         fee_base: Option<i64>,
         cu_limit: u32,
     ) -> Result<VersionedTransaction, TxError> {
-        // Fresh blockhash from OUR RPC (brief §7.3) — never Panta's hint.
-        let blockhash = self
-            .rpc
-            .get_latest_blockhash()
-            .await
-            .map_err(|e| TxError::Rpc(format!("could not get blockhash: {e}")))?;
+        let blockhash = if self.mock {
+            solana_sdk::hash::Hash::default()
+        } else {
+            self.rpc
+                .get_latest_blockhash()
+                .await
+                .map_err(|e| TxError::Rpc(format!("could not get blockhash: {e}")))?
+        };
         self.assemble_with_blockhash(payer, leg_instructions, fee_base, cu_limit, blockhash)
     }
 
