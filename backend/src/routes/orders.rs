@@ -21,6 +21,7 @@ use crate::domain::{
 use crate::error::AppError;
 use crate::panta;
 use crate::queries;
+use crate::settlement;
 use crate::solana_tx::{SolanaCtx, TxError};
 use crate::state::AppState;
 
@@ -64,6 +65,9 @@ pub async fn quote(
             "amount must be between 0.01 and 1000 USDC",
         ));
     }
+
+    // The order row references our market catalog: make sure it is there.
+    crate::routes::markets::ensure_market(&state, &req.market_id).await?;
 
     // 2. Ask Panta to simulate the fill (wallet comes from the session).
     let quote = state
@@ -157,17 +161,25 @@ pub async fn build(
     for wire in &built.instructions {
         legs.push(vec![SolanaCtx::parse_wire_instruction(wire)?]);
     }
-    let tx = state.solana.assemble(&payer, legs, None, 400_000).await?;
+    let assembled = state.solana.assemble(&payer, legs, None, 400_000).await?;
 
     // 4. Funds-protection check + on-chain simulation BEFORE the user signs.
-    state.solana.validate(&tx, &payer, None)?;
-    state.solana.simulate(&tx).await?;
+    state.solana.validate(&assembled.tx, &payer, None)?;
+    state.solana.simulate(&assembled.tx).await?;
 
-    // 5. Persist the built state with Panta's order id for submit/verify.
-    queries::orders::mark_built(&client, order_id, &built.order_id).await?;
+    // 5. Persist the built state with Panta's order id and the exact message
+    //    bytes the user is about to sign (submit accepts nothing else).
+    queries::orders::mark_built(
+        &client,
+        order_id,
+        &built.order_id,
+        Some(&assembled.message_bytes()),
+        assembled.expiry(),
+    )
+    .await?;
 
     // 6. Encode for the wallet (standard base64 of the wire serialization).
-    let tx_base64 = encode_tx(&tx)?;
+    let tx_base64 = encode_tx(&assembled.tx)?;
 
     let summary = TxSummary {
         summary_lines: vec![format!(
@@ -204,10 +216,11 @@ pub async fn build(
 
 /// `POST /v1/orders/{orderId}/submit` — the user signed; broadcast it.
 ///
-/// Returns as soon as the transaction is on the network; confirmation and
-/// Panta attribution happen right after (inline await in mock mode is instant;
-/// in real mode the broadcast call itself retries, and confirmation is polled
-/// by this request — bounded at ~90 s worst case).
+/// The signed tx must be byte-identical to the one we built. The signature
+/// is recorded BEFORE broadcasting; the request then waits up to ~20 s for
+/// confirmation. If it is still pending, the order is returned as
+/// `submitted` and the `tx_confirm` worker job finishes it (poll
+/// `GET /v1/orders/{id}`).
 pub async fn submit(
     State(state): State<AppState>,
     user: AuthUser,
@@ -215,21 +228,6 @@ pub async fn submit(
     Json(req): Json<SubmitRequest>,
 ) -> Result<Json<OrderView>, AppError> {
     let order_id = parse_order_id(&order_id_path)?;
-    let client = state.db.get().await?;
-
-    // 1. Load + ownership + state.
-    let order = load_owned_order(&client, order_id, user.user_id).await?;
-    if order.status != "built" {
-        return Err(AppError::bad_request(
-            "ORDER_NOT_BUILT",
-            format!("order is in status '{0}', build it first", order.status),
-        ));
-    }
-    let panta_order_id = order
-        .panta_order_id
-        .clone()
-        .ok_or_else(|| AppError::internal("order is missing its panta order id"))?;
-
     if req.signed_txs.len() != 1 {
         return Err(AppError::bad_request(
             "INVALID_REQUEST",
@@ -237,48 +235,35 @@ pub async fn submit(
         ));
     }
 
-    // 2. Deserialize the signed transaction (user's wallet filled the sigs).
-    let signed: solana_sdk::transaction::VersionedTransaction =
-        bincode::deserialize(&decode_b64(&req.signed_txs[0])?).map_err(|_| {
-            AppError::bad_request("INVALID_TX", "signed transaction could not be decoded")
-        })?;
+    let (signed, signature) = {
+        let client = state.db.get().await?;
 
-    // 3. Broadcast through our RPC and wait for confirmation.
-    let signature = state.solana.broadcast_and_confirm(&signed).await?;
+        // 1. Load + ownership + state.
+        let order = load_owned_order(&client, order_id, user.user_id).await?;
+        if order.status != "built" {
+            return Err(AppError::bad_request(
+                "ORDER_NOT_BUILT",
+                format!("order is in status '{0}', build it first", order.status),
+            ));
+        }
+        let (built_message, expiry) = queries::orders::build_info(&client, order_id)
+            .await?
+            .ok_or_else(|| AppError::internal("order has no built transaction"))?;
 
-    // 4. Record the signature, then tell Panta (idempotent on both sides).
-    queries::orders::mark_submitted(&client, order_id, &signature).await?;
-    queries::orders::insert_transaction(&client, &signature, user.user_id, "order").await?;
-    queries::orders::update_transaction_status(&client, &signature, "confirmed", None).await?;
+        // 2. Must be exactly the tx we built, validly signed.
+        let signed = settlement::decode_signed(&req.signed_txs[0])?;
+        let signature = settlement::verify_signed(&signed, &built_message)?;
 
-    let submit_result = state
-        .panta
-        .submit_primary(&panta::SubmitRequest {
-            order_id: panta_order_id.clone(),
-            signature: signature.clone(),
-            wallet: Some(user.wallet.clone()),
-        })
-        .await;
+        // 3. Record the signature before it touches the network.
+        settlement::record_submission(&client, "order", order_id, user.user_id, &signature, expiry)
+            .await?;
+        (signed, signature)
+    }; // DB connection released before the network wait
 
-    // Attribution report: primary buy -> kind buy (idempotent per signature).
-    let _ = state
-        .panta
-        .report_trade(&panta::ReportTradeRequest {
-            signature: signature.clone(),
-            wallet: user.wallet.clone(),
-            market_id: order.market_id.clone(),
-            quote_id: order.panta_quote_id.clone(),
-            client_order_id: Some(order_id.to_string()),
-            user_id: None,
-        })
-        .await;
+    // 4. Broadcast, wait briefly, settle (or leave to the worker).
+    settlement::broadcast_and_settle(&state, &signed, &signature).await?;
 
-    // 5. Panta accept or not, the on-chain truth stands: mark filled.
-    if let Err(e) = submit_result {
-        tracing::warn!(error = %e, "panta submit failed (on-chain purchase still stands)");
-    }
-    queries::orders::set_status(&client, order_id, "filled", None).await?;
-
+    let client = state.db.get().await?;
     Ok(Json(order_view(order_id, user.user_id, &client).await?))
 }
 
@@ -328,13 +313,6 @@ pub fn encode_tx(tx: &solana_sdk::transaction::VersionedTransaction) -> Result<S
         &base64::engine::general_purpose::STANDARD,
         bytes,
     ))
-}
-
-fn decode_b64(s: &str) -> Result<Vec<u8>, AppError> {
-    use base64::Engine;
-    base64::engine::general_purpose::STANDARD
-        .decode(s)
-        .map_err(|_| AppError::bad_request("INVALID_TX", "transaction is not valid base64"))
 }
 
 /// DB row -> API view.

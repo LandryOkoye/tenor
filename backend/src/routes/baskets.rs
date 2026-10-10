@@ -27,11 +27,14 @@ use crate::error::AppError;
 use crate::panta;
 use crate::queries;
 use crate::routes::orders::encode_tx;
+use crate::settlement;
 use crate::state::AppState;
 
 /// Safety margin subtracted from the earliest leg expiry when we tell the
 /// user how long the whole-basket quote is valid (brief §7.3 step 4).
 const QUOTE_EXPIRY_MARGIN_SECS: i64 = 15;
+/// Highest slippage tolerance a user may pick (10%).
+const MAX_SLIPPAGE_BPS: i32 = 1_000;
 
 /// `GET /v1/baskets` — all published templates with live numbers.
 pub async fn list(
@@ -144,6 +147,18 @@ pub async fn quote(
         ));
     }
 
+    // Slippage tolerance: 0.01%–10% (Panta caps at 50%; above 10% a
+    // "basket" stops being a sensible purchase).
+    let slippage_bps = req
+        .slippage_bps
+        .unwrap_or(state.config.default_slippage_bps as i32);
+    if !(1..=MAX_SLIPPAGE_BPS).contains(&slippage_bps) {
+        return Err(AppError::bad_request(
+            "INVALID_SLIPPAGE",
+            format!("slippage_bps must be between 1 and {MAX_SLIPPAGE_BPS}"),
+        ));
+    }
+
     // 3. Allocate: fee off the top, then weights (floor; dust unspent).
     let weights: Vec<i32> = legs.iter().map(|l| l.weight_bps).collect();
     let (allocations, fee_base, _dust) =
@@ -222,8 +237,7 @@ pub async fn quote(
         user.user_id,
         amount,
         fee_base,
-        req.slippage_bps
-            .unwrap_or(state.config.default_slippage_bps as i32),
+        slippage_bps,
         &serde_json::Value::Array(legs_json),
         expires_at,
     )
@@ -258,6 +272,12 @@ pub async fn build(
         return Err(AppError::bad_request(
             "QUOTE_STALE",
             "quote expired; request a new one",
+        ));
+    }
+    if queries::baskets::quote_already_built(&client, quote_id).await? {
+        return Err(AppError::bad_request(
+            "QUOTE_ALREADY_USED",
+            "this quote was already built; request a new one",
         ));
     }
     let template = queries::baskets::get_template(&client, q.template_id)
@@ -304,44 +324,64 @@ pub async fn build(
         leg_instruction_sets.push(ixs);
         order_ids.push(b.order_id.clone());
     }
-    let tx = state
+    let assembled = state
         .solana
         .assemble(&payer, leg_instruction_sets, Some(q.fee_usdc), 400_000)
         .await?;
 
     // 4. Funds-protection validation (with the fee audit) + simulation.
-    state.solana.validate(&tx, &payer, Some(q.fee_usdc))?;
-    state.solana.simulate(&tx).await?;
+    state
+        .solana
+        .validate(&assembled.tx, &payer, Some(q.fee_usdc))?;
+    state.solana.simulate(&assembled.tx).await?;
 
-    // 5. Persist: purchase + one order row per leg, all linked together.
-    let purchase_id = queries::baskets::insert_purchase(
-        &client,
-        q.template_id,
-        user.user_id,
-        q.id,
-        q.amount_usdc,
-        q.fee_usdc,
-    )
-    .await?;
-    for (leg, panta_order_id) in legs.iter().zip(&order_ids) {
-        let market_id = leg["market_id"].as_str().unwrap_or_default();
-        let side = leg["side"].as_str().unwrap_or("yes");
-        let alloc = leg["allocation_base"].as_i64().unwrap_or(0);
-        let shares = leg["shares_base"].as_i64();
-        let panta_quote_id = leg["panta_quote_id"].as_str().unwrap_or_default();
-        let order_id = queries::orders::insert_order(
+    // 5. Persist atomically: purchase (with the exact message bytes the user
+    //    will sign) + one order row per leg, all linked together.
+    client.batch_execute("BEGIN").await?;
+    let persisted: Result<Uuid, AppError> = async {
+        let purchase_id = queries::baskets::insert_purchase(
             &client,
+            q.template_id,
             user.user_id,
-            market_id,
-            side,
-            alloc,
-            shares,
-            panta_quote_id,
+            q.id,
+            q.amount_usdc,
+            q.fee_usdc,
+            &assembled.message_bytes(),
+            assembled.expiry(),
         )
         .await?;
-        queries::orders::link_to_purchase(&client, order_id, purchase_id).await?;
-        queries::orders::mark_built(&client, order_id, panta_order_id).await?;
+        for (leg, panta_order_id) in legs.iter().zip(&order_ids) {
+            let market_id = leg["market_id"].as_str().unwrap_or_default();
+            let side = leg["side"].as_str().unwrap_or("yes");
+            let alloc = leg["allocation_base"].as_i64().unwrap_or(0);
+            let shares = leg["shares_base"].as_i64();
+            let panta_quote_id = leg["panta_quote_id"].as_str().unwrap_or_default();
+            let order_id = queries::orders::insert_order(
+                &client,
+                user.user_id,
+                market_id,
+                side,
+                alloc,
+                shares,
+                panta_quote_id,
+            )
+            .await?;
+            queries::orders::link_to_purchase(&client, order_id, purchase_id).await?;
+            queries::orders::mark_built(&client, order_id, panta_order_id, None, None).await?;
+        }
+        Ok(purchase_id)
     }
+    .await;
+    let purchase_id = match persisted {
+        Ok(id) => {
+            client.batch_execute("COMMIT").await?;
+            id
+        }
+        Err(e) => {
+            client.batch_execute("ROLLBACK").await?;
+            return Err(e);
+        }
+    };
 
     // 6. Human-readable disclosure before signing (brief §12).
     let n_legs = legs.len();
@@ -367,7 +407,7 @@ pub async fn build(
 
     Ok(Json(BasketBuildResponse {
         purchase_id,
-        transactions: vec![encode_tx(&tx)?],
+        transactions: vec![encode_tx(&assembled.tx)?],
         summary,
         expires_at: q.expires_at,
     }))
@@ -375,24 +415,17 @@ pub async fn build(
 
 /// `POST /v1/baskets/purchases/{id}/submit` — broadcast the signed basket tx
 /// and settle statuses + Panta attribution for every leg.
+///
+/// Same guarantees as single orders: the signed tx must be byte-identical to
+/// the one we built (so our fee instruction cannot be dropped), the
+/// signature is recorded before broadcasting, and a still-pending tx is
+/// finished by the `tx_confirm` worker job.
 pub async fn submit(
     State(state): State<AppState>,
     user: AuthUser,
     Path(purchase_id): Path<Uuid>,
     Json(req): Json<SubmitRequest>,
 ) -> Result<Json<crate::domain::BasketPurchaseView>, AppError> {
-    let client = state.db.get().await?;
-
-    let purchase = queries::baskets::get_purchase(&client, purchase_id)
-        .await?
-        .filter(|p| p.user_id == user.user_id)
-        .ok_or_else(|| AppError::not_found("purchase not found"))?;
-    if purchase.status != "built" {
-        return Err(AppError::bad_request(
-            "PURCHASE_NOT_BUILT",
-            format!("purchase is in status '{}'", purchase.status),
-        ));
-    }
     if req.signed_txs.len() != 1 {
         return Err(AppError::bad_request(
             "INVALID_REQUEST",
@@ -400,48 +433,42 @@ pub async fn submit(
         ));
     }
 
-    // 1. Decode the signed tx and broadcast; ONE tx means all-or-nothing.
-    let signed: solana_sdk::transaction::VersionedTransaction =
-        bincode::deserialize(&decode_b64(&req.signed_txs[0])?).map_err(|_| {
-            AppError::bad_request("INVALID_TX", "signed transaction could not be decoded")
-        })?;
-    let signature = state.solana.broadcast_and_confirm(&signed).await?;
-
-    // 2. Record the shared transaction + move purchase to filled.
-    queries::orders::insert_transaction(&client, &signature, user.user_id, "basket").await?;
-    queries::orders::update_transaction_status(&client, &signature, "confirmed", None).await?;
-    queries::baskets::set_purchase_status(&client, purchase_id, "filled").await?;
-
-    // 3. Tell Panta per leg (idempotent) and attribute the trades.
-    let orders = queries::baskets::purchase_leg_orders(&client, purchase_id).await?;
-    for leg in &orders {
-        if let Some(panta_order_id) = &leg.panta_order_id {
-            let _ = state
-                .panta
-                .submit_primary(&panta::SubmitRequest {
-                    order_id: panta_order_id.clone(),
-                    signature: signature.clone(),
-                    wallet: Some(user.wallet.clone()),
-                })
-                .await;
-            let _ = state
-                .panta
-                .report_trade(&panta::ReportTradeRequest {
-                    signature: signature.clone(),
-                    wallet: user.wallet.clone(),
-                    market_id: leg.market_id.clone(),
-                    quote_id: leg.panta_quote_id.clone(),
-                    client_order_id: Some(leg.id.to_string()),
-                    user_id: None,
-                })
-                .await;
+    let (signed, signature) = {
+        let client = state.db.get().await?;
+        let purchase = queries::baskets::get_purchase(&client, purchase_id)
+            .await?
+            .filter(|p| p.user_id == user.user_id)
+            .ok_or_else(|| AppError::not_found("purchase not found"))?;
+        if purchase.status != "built" {
+            return Err(AppError::bad_request(
+                "PURCHASE_NOT_BUILT",
+                format!("purchase is in status '{}'", purchase.status),
+            ));
         }
-        // On-chain truth: the single tx filled every leg.
-        queries::orders::set_status(&client, leg.id, "filled", None).await?;
-    }
+        let (built_message, expiry) = queries::baskets::purchase_build_info(&client, purchase_id)
+            .await?
+            .ok_or_else(|| AppError::internal("purchase has no built transaction"))?;
 
-    let view = purchase_view(&client, purchase_id).await?;
-    Ok(Json(view))
+        // ONE tx means all-or-nothing; it must be exactly the one we built.
+        let signed = settlement::decode_signed(&req.signed_txs[0])?;
+        let signature = settlement::verify_signed(&signed, &built_message)?;
+
+        settlement::record_submission(
+            &client,
+            "basket",
+            purchase_id,
+            user.user_id,
+            &signature,
+            expiry,
+        )
+        .await?;
+        (signed, signature)
+    };
+
+    settlement::broadcast_and_settle(&state, &signed, &signature).await?;
+
+    let client = state.db.get().await?;
+    Ok(Json(purchase_view(&client, purchase_id).await?))
 }
 
 /// `GET /v1/baskets/purchases/{id}` — per-leg progress for the frontend.
@@ -482,13 +509,6 @@ fn parse_status(s: &str) -> BasketStatus {
         "settled" => BasketStatus::Settled,
         _ => BasketStatus::Draft,
     }
-}
-
-fn decode_b64(s: &str) -> Result<Vec<u8>, AppError> {
-    use base64::Engine;
-    base64::engine::general_purpose::STANDARD
-        .decode(s)
-        .map_err(|_| AppError::bad_request("INVALID_TX", "transaction is not valid base64"))
 }
 
 /// Build the full purchase view (per-leg status, current prices, claimable).
