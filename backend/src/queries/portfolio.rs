@@ -71,29 +71,112 @@ pub async fn insert_claim(
     tx_signature: &str,
     amount_usdc: Option<i64>,
 ) -> Result<(), tokio_postgres::Error> {
+    // Idempotent: the API and the tx_confirm job may both settle a claim.
     client
         .execute(
             "INSERT INTO claims (user_id, market_id, tx_signature, amount_usdc, status)
-             VALUES ($1, $2, $3, $4, 'confirmed')",
+             SELECT $1, $2, $3, $4, 'confirmed'
+             WHERE NOT EXISTS (SELECT 1 FROM claims
+                               WHERE user_id = $1 AND market_id = $2 AND tx_signature = $3)",
             &[&user_id, &market_id, &tx_signature, &amount_usdc],
         )
         .await?;
     Ok(())
 }
 
-/// Mark all leg orders on a market as claimed.
+/// Mark one user's winning orders on a market as claimed.
 pub async fn mark_orders_claimed(
     client: &Client,
+    user_id: Uuid,
     market_id: &str,
 ) -> Result<u64, tokio_postgres::Error> {
     let n = client
         .execute(
             "UPDATE orders SET status = 'claimed', updated_at = now()
-             WHERE market_id = $1 AND status = 'resolved_win'",
-            &[&market_id],
+             WHERE user_id = $1 AND market_id = $2 AND status = 'resolved_win'",
+            &[&user_id, &market_id],
         )
         .await?;
     Ok(n)
+}
+
+// --- Claim batches (one per claim transaction we build) ----------------------
+
+pub async fn insert_claim_batch(
+    client: &Client,
+    user_id: Uuid,
+    market_ids: &[String],
+    built_message: &[u8],
+    last_valid_block_height: Option<i64>,
+) -> Result<Uuid, tokio_postgres::Error> {
+    let row = client
+        .query_one(
+            "INSERT INTO claim_batches (user_id, market_ids, built_message,
+                                        last_valid_block_height)
+             VALUES ($1, $2, $3, $4) RETURNING id",
+            &[
+                &user_id,
+                &market_ids,
+                &built_message,
+                &last_valid_block_height,
+            ],
+        )
+        .await?;
+    Ok(row.get(0))
+}
+
+pub struct ClaimBatchRow {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub market_ids: Vec<String>,
+    pub built_message: Vec<u8>,
+    pub last_valid_block_height: Option<i64>,
+    pub tx_signature: Option<String>,
+    pub status: String,
+}
+
+pub async fn get_claim_batch(
+    client: &Client,
+    id: Uuid,
+) -> Result<Option<ClaimBatchRow>, tokio_postgres::Error> {
+    let row = client
+        .query_opt(
+            "SELECT id, user_id, market_ids, built_message, last_valid_block_height,
+                    tx_signature, status
+             FROM claim_batches WHERE id = $1",
+            &[&id],
+        )
+        .await?;
+    Ok(row.map(|r| ClaimBatchRow {
+        id: r.get(0),
+        user_id: r.get(1),
+        market_ids: r.get(2),
+        built_message: r.get(3),
+        last_valid_block_height: r.get(4),
+        tx_signature: r.get(5),
+        status: r.get(6),
+    }))
+}
+
+/// Move a claim batch `from` -> `to` (no-op otherwise). Returns true if moved.
+pub async fn transition_claim_batch(
+    client: &Client,
+    id: Uuid,
+    from: &str,
+    to: &str,
+    signature: Option<&str>,
+    error_code: Option<&str>,
+) -> Result<bool, tokio_postgres::Error> {
+    let n = client
+        .execute(
+            "UPDATE claim_batches
+             SET status = $3, tx_signature = COALESCE($4, tx_signature),
+                 error_code = $5, updated_at = now()
+             WHERE id = $1 AND status = $2",
+            &[&id, &from, &to, &signature, &error_code],
+        )
+        .await?;
+    Ok(n == 1)
 }
 
 /// Activity feed pieces from our tables (brief: orders + claims merged).

@@ -386,6 +386,7 @@ pub async fn get_quote(
 }
 
 /// Create the purchase record when a quote is built into a transaction.
+#[allow(clippy::too_many_arguments)] // mirrors the table columns
 pub async fn insert_purchase(
     client: &Client,
     template_id: Uuid,
@@ -393,17 +394,110 @@ pub async fn insert_purchase(
     quote_id: Uuid,
     amount_usdc: i64,
     fee_usdc: i64,
+    built_message: &[u8],
+    last_valid_block_height: Option<i64>,
 ) -> Result<Uuid, tokio_postgres::Error> {
     let row = client
         .query_one(
             "INSERT INTO basket_purchases (template_id, user_id, quote_id, amount_usdc,
-                                           fee_usdc, status)
-             VALUES ($1, $2, $3, $4, $5, 'built')
+                                           fee_usdc, status, built_message,
+                                           last_valid_block_height)
+             VALUES ($1, $2, $3, $4, $5, 'built', $6, $7)
              RETURNING id",
-            &[&template_id, &user_id, &quote_id, &amount_usdc, &fee_usdc],
+            &[
+                &template_id,
+                &user_id,
+                &quote_id,
+                &amount_usdc,
+                &fee_usdc,
+                &built_message,
+                &last_valid_block_height,
+            ],
         )
         .await?;
     Ok(row.get(0))
+}
+
+/// Has this quote already been turned into a purchase? (A quote builds once.)
+pub async fn quote_already_built(
+    client: &Client,
+    quote_id: Uuid,
+) -> Result<bool, tokio_postgres::Error> {
+    Ok(client
+        .query_opt(
+            "SELECT 1 FROM basket_purchases WHERE quote_id = $1 LIMIT 1",
+            &[&quote_id],
+        )
+        .await?
+        .is_some())
+}
+
+/// The message bytes + blockhash expiry recorded when the purchase was built.
+pub async fn purchase_build_info(
+    client: &Client,
+    purchase_id: Uuid,
+) -> Result<Option<(Vec<u8>, Option<i64>)>, tokio_postgres::Error> {
+    let row = client
+        .query_opt(
+            "SELECT built_message, last_valid_block_height FROM basket_purchases
+             WHERE id = $1 AND built_message IS NOT NULL",
+            &[&purchase_id],
+        )
+        .await?;
+    Ok(row.map(|r| (r.get(0), r.get(1))))
+}
+
+/// `built` -> `submitted` with the signature, for the purchase and all its
+/// legs. Returns false if the purchase was no longer `built`.
+pub async fn mark_purchase_submitted(
+    client: &Client,
+    purchase_id: Uuid,
+    signature: &str,
+) -> Result<bool, tokio_postgres::Error> {
+    let n = client
+        .execute(
+            "UPDATE basket_purchases SET status = 'submitted', tx_signature = $2, updated_at = now()
+             WHERE id = $1 AND status = 'built'",
+            &[&purchase_id, &signature],
+        )
+        .await?;
+    if n == 1 {
+        client
+            .execute(
+                "UPDATE orders SET status = 'submitted', tx_signature = $2, updated_at = now()
+                 WHERE basket_purchase_id = $1 AND status = 'built'",
+                &[&purchase_id, &signature],
+            )
+            .await?;
+    }
+    Ok(n == 1)
+}
+
+/// Settle a submitted purchase and its legs to `filled` or `failed`.
+/// No-op unless the purchase is still `submitted` (idempotent).
+pub async fn settle_purchase(
+    client: &Client,
+    purchase_id: Uuid,
+    to: &str,
+    error_code: Option<&str>,
+) -> Result<bool, tokio_postgres::Error> {
+    let n = client
+        .execute(
+            "UPDATE basket_purchases SET status = $2, updated_at = now()
+             WHERE id = $1 AND status = 'submitted'",
+            &[&purchase_id, &to],
+        )
+        .await?;
+    if n == 1 {
+        client
+            .execute(
+                "UPDATE orders SET status = $2, error_code = $3, updated_at = now()
+                 WHERE basket_purchase_id = $1 AND status = 'submitted'",
+                &[&purchase_id, &to, &error_code],
+            )
+            .await?;
+    }
+    Ok(n == 1)
 }
 
 /// Purchase row for status views.
@@ -518,7 +612,10 @@ pub async fn settle_resolutions(
     market_id: &str,
     outcome: Option<&str>,
 ) -> Result<u64, tokio_postgres::Error> {
-    let outcome = outcome.unwrap_or("yes");
+    // No published outcome yet (or a cancelled market): never guess a winner.
+    let Some(outcome) = outcome.filter(|o| *o == "yes" || *o == "no") else {
+        return Ok(0);
+    };
     // 1. Legs: mark filled orders on this market by outcome side.
     let legs = client
         .execute(
