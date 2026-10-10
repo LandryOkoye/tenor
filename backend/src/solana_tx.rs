@@ -30,6 +30,8 @@ use std::time::Duration;
 use base64::Engine;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{
+    commitment_config::CommitmentConfig,
+    compute_budget::ComputeBudgetInstruction,
     instruction::{AccountMeta, Instruction},
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
@@ -55,6 +57,14 @@ pub const SYSTEM_PROGRAM: &str = "11111111111111111111111111111111";
 
 /// SPL Token `transfer_checked` instruction discriminant.
 const SPL_TRANSFER_CHECKED: u8 = 12;
+/// ComputeBudget instruction tags (solana-compute-budget-interface).
+const CB_SET_COMPUTE_UNIT_LIMIT: u8 = 2;
+const CB_SET_COMPUTE_UNIT_PRICE: u8 = 3;
+/// Runtime ceiling on compute units per transaction.
+const MAX_CU_LIMIT: u32 = 1_400_000;
+/// ATA program instructions we allow: Create (0) and CreateIdempotent (1).
+/// Legacy Create is encoded with empty data.
+const ATA_ALLOWED_TAGS: [u8; 2] = [0, 1];
 /// USDC (and all Panta settlement) uses 6 decimals.
 const USDC_DECIMALS: u8 = 6;
 /// Solana network packet size limit for a transaction, in bytes.
@@ -79,6 +89,39 @@ pub enum TxError {
     Expired,
     #[error("not confirmed within timeout")]
     NotConfirmed,
+}
+
+/// An unsigned transaction plus the block height after which its blockhash
+/// expires (used by the confirmation job to declare a tx dead).
+pub struct AssembledTx {
+    pub tx: VersionedTransaction,
+    pub last_valid_block_height: u64,
+}
+
+impl AssembledTx {
+    /// Wire bytes of the message — stored at build time and compared
+    /// byte-for-byte against what the user signs (see `check_signed`).
+    pub fn message_bytes(&self) -> Vec<u8> {
+        self.tx.message.serialize()
+    }
+
+    /// Blockhash expiry as a DB value (None in mock mode, where it never expires).
+    pub fn expiry(&self) -> Option<i64> {
+        i64::try_from(self.last_valid_block_height).ok()
+    }
+}
+
+/// On-chain state of a signature, as the confirmation logic needs it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SigStatus {
+    /// Not seen by the cluster (yet).
+    Unknown,
+    /// Seen at `processed` only — can still be dropped by a fork.
+    Processed,
+    /// `confirmed` or `finalized` and succeeded.
+    Confirmed,
+    /// Landed but the program returned an error.
+    Failed(String),
 }
 
 // --- Context ----------------------------------------------------------------
@@ -192,26 +235,13 @@ impl SolanaCtx {
         })
     }
 
-    /// ComputeBudget instructions: a CU limit and a priority fee.
-    /// Data layout: [tag, value-LE] — tag 1 = set_compute_unit_limit (u32),
-    /// tag 2 = set_compute_unit_price (u64 micro-lamports/CU).
+    /// ComputeBudget instructions: a CU limit and a priority fee. Built with
+    /// the SDK helpers so the instruction tags always match the runtime
+    /// (2 = SetComputeUnitLimit, 3 = SetComputeUnitPrice).
     fn compute_budget_instructions(&self, cu_limit: u32) -> Vec<Instruction> {
-        let program = Pubkey::from_str(COMPUTE_BUDGET_PROGRAM).expect("compute budget id");
         vec![
-            Instruction {
-                program_id: program,
-                accounts: vec![],
-                data: [vec![1u8], cu_limit.to_le_bytes().to_vec()].concat(),
-            },
-            Instruction {
-                program_id: program,
-                accounts: vec![],
-                data: [
-                    vec![2u8],
-                    self.priority_fee_microlamports.to_le_bytes().to_vec(),
-                ]
-                .concat(),
-            },
+            ComputeBudgetInstruction::set_compute_unit_limit(cu_limit),
+            ComputeBudgetInstruction::set_compute_unit_price(self.priority_fee_microlamports),
         ]
     }
 
@@ -257,16 +287,26 @@ impl SolanaCtx {
         leg_instructions: Vec<Vec<Instruction>>,
         fee_base: Option<i64>,
         cu_limit: u32,
-    ) -> Result<VersionedTransaction, TxError> {
-        let blockhash = if self.mock {
-            solana_sdk::hash::Hash::default()
+    ) -> Result<AssembledTx, TxError> {
+        let (blockhash, last_valid_block_height) = if self.mock {
+            // Random per build so two mock purchases never share a signature
+            // (even across restarts).
+            (
+                solana_sdk::hash::hashv(&[uuid::Uuid::new_v4().as_bytes()]),
+                u64::MAX,
+            )
         } else {
             self.rpc
-                .get_latest_blockhash()
+                .get_latest_blockhash_with_commitment(CommitmentConfig::confirmed())
                 .await
                 .map_err(|e| TxError::Rpc(format!("could not get blockhash: {e}")))?
         };
-        self.assemble_with_blockhash(payer, leg_instructions, fee_base, cu_limit, blockhash)
+        let tx =
+            self.assemble_with_blockhash(payer, leg_instructions, fee_base, cu_limit, blockhash)?;
+        Ok(AssembledTx {
+            tx,
+            last_valid_block_height,
+        })
     }
 
     /// Pure assembly (blockhash supplied) — separated so tests need no RPC.
@@ -280,9 +320,13 @@ impl SolanaCtx {
     ) -> Result<VersionedTransaction, TxError> {
         // Instruction order matters on Solana: compute budget first, then the
         // legs, then our fee.
+        // Any ComputeBudget instructions inside the legs (e.g. sent by Panta)
+        // are dropped: we set exactly one limit + one price ourselves, and
+        // duplicates make the runtime reject the transaction.
+        let compute_budget = Pubkey::from_str(COMPUTE_BUDGET_PROGRAM).expect("compute budget id");
         let mut instructions = self.compute_budget_instructions(cu_limit);
         for leg in leg_instructions {
-            instructions.extend(leg);
+            instructions.extend(leg.into_iter().filter(|ix| ix.program_id != compute_budget));
         }
         if let Some(fee) = fee_base {
             instructions.push(self.fee_instruction(payer, fee)?);
@@ -330,17 +374,19 @@ impl SolanaCtx {
         payer: &Pubkey,
         expected_fee_base: Option<i64>,
     ) -> Result<(), TxError> {
-        let allowlist: Vec<Pubkey> = {
-            let ids = [
-                Pubkey::from_str(TOKEN_PROGRAM).unwrap(),
-                Pubkey::from_str(ATA_PROGRAM).unwrap(),
-                Pubkey::from_str(COMPUTE_BUDGET_PROGRAM).unwrap(),
-                Pubkey::from_str(SYSTEM_PROGRAM).unwrap(),
-            ];
-            let mut all: Vec<Pubkey> = ids.to_vec();
-            all.extend(self.panta_programs.iter().copied());
-            all
-        };
+        let token_program = Pubkey::from_str(TOKEN_PROGRAM).unwrap();
+        let ata_program = Pubkey::from_str(ATA_PROGRAM).unwrap();
+        let compute_budget_program = Pubkey::from_str(COMPUTE_BUDGET_PROGRAM).unwrap();
+        let system_program = Pubkey::from_str(SYSTEM_PROGRAM).unwrap();
+
+        // The System program is only ever used by mock instructions; a real
+        // purchase never needs a top-level System instruction, and allowing
+        // one would let a SOL transfer to anyone through.
+        let mut allowlist = vec![token_program, ata_program, compute_budget_program];
+        if self.mock {
+            allowlist.push(system_program);
+        }
+        allowlist.extend(self.panta_programs.iter().copied());
 
         // Static account list of the compiled message (indexing into it is
         // how instructions reference accounts).
@@ -361,7 +407,7 @@ impl SolanaCtx {
         //    its accounts must resolve within the static key list (we never
         //    ship ALTs; an out-of-range index means something is wrong).
         let mut fee_transfers = Vec::new(); // (source, dest, amount) for fee checking
-        let token_program = Pubkey::from_str(TOKEN_PROGRAM).unwrap();
+        let (mut cu_limit_seen, mut cu_price_seen) = (false, false);
         for (i, compiled) in tx.message.instructions().iter().enumerate() {
             // Program id: index into the static keys; fail on any mismatch.
             let program_index = compiled.program_id_index as usize;
@@ -389,14 +435,50 @@ impl SolanaCtx {
                 accounts.push(static_keys[idx]);
             }
 
-            // Track any SPL transfer_checked for the fee audit below.
+            let data = compiled.data.as_slice();
+
+            // Token program: the ONLY token instruction we ever allow at the
+            // top level is a transfer_checked (our fee, audited below). Any
+            // other shape (transfer, approve, set_authority, close, …) could
+            // move or expose the user's funds.
             if program_id == &token_program {
-                if let Some((source, dest, amount)) =
-                    decode_transfer_checked(&compiled.data, &accounts)
-                {
-                    fee_transfers.push((source, dest, amount));
+                match decode_transfer_checked(data, &accounts) {
+                    Some(transfer) => fee_transfers.push(transfer),
+                    None => {
+                        return Err(TxError::Validation(format!(
+                            "instruction {i}: only a fee transfer_checked is allowed on the token program"
+                        )))
+                    }
                 }
             }
+
+            // ATA program: account creation only (no RecoverNested).
+            if program_id == &ata_program
+                && !(data.is_empty() || (data.len() == 1 && ATA_ALLOWED_TAGS.contains(&data[0])))
+            {
+                return Err(TxError::Validation(format!(
+                    "instruction {i}: only associated-account creation is allowed"
+                )));
+            }
+
+            // ComputeBudget: exactly our CU limit + our priority price, once
+            // each. A foreign price instruction could drain the payer's SOL.
+            if program_id == &compute_budget_program {
+                self.check_compute_budget(i, data, &mut cu_limit_seen, &mut cu_price_seen)?;
+            }
+        }
+
+        // 2b. Every transfer_checked must be our fee: user's ATA -> fee ATA.
+        if expected_fee_base.is_none() && !fee_transfers.is_empty() {
+            return Err(TxError::Validation(
+                "unexpected token transfer in a transaction that carries no fee".into(),
+            ));
+        }
+        let fee_ata = self.fee_usdc_ata();
+        if let Some((_, dest, _)) = fee_transfers.iter().find(|(_, d, _)| *d != fee_ata) {
+            return Err(TxError::Validation(format!(
+                "token transfer to {dest}, which is not the fee wallet"
+            )));
         }
 
         // 3. Fee audit (only when we charge one on this transaction).
@@ -456,27 +538,30 @@ impl SolanaCtx {
         Ok(())
     }
 
-    /// Broadcast a signed transaction and wait until it is confirmed.
-    /// Returns the transaction signature. Retries the send until the
-    /// blockhash would expire; confirms by polling signature status.
-    pub async fn broadcast_and_confirm(
-        &self,
-        tx: &VersionedTransaction,
-    ) -> Result<String, TxError> {
-        if self.mock {
-            tracing::warn!("mock mode: faking broadcast and confirmation");
-            return Ok(mock_signature());
-        }
+    /// The signature a signed transaction will land under (its first
+    /// signature, i.e. the fee payer's). Known BEFORE broadcasting, so we can
+    /// persist it first and never lose track of a transaction.
+    pub fn signature_of(tx: &VersionedTransaction) -> Result<String, TxError> {
+        tx.signatures
+            .first()
+            .filter(|s| **s != Signature::default())
+            .map(|s| s.to_string())
+            .ok_or_else(|| TxError::Validation("transaction is not signed".into()))
+    }
 
-        // Send with retry — preflight is enabled (skip_preflight=false).
+    /// Broadcast a signed transaction (preflight on). Retries transport
+    /// errors a few times; re-sending the same signed tx is harmless.
+    /// Returns the signature. Mock mode sends nothing.
+    pub async fn send(&self, tx: &VersionedTransaction) -> Result<String, TxError> {
+        let signature = Self::signature_of(tx)?;
+        if self.mock {
+            tracing::warn!("mock mode: not broadcasting");
+            return Ok(signature);
+        }
         let mut last_err = None;
         for _ in 0..3 {
             match self.rpc.send_transaction(tx).await {
-                Ok(sig) => {
-                    // Confirmed-failed txs are terminal (not retried).
-                    self.confirm(&sig).await?;
-                    return Ok(sig.to_string());
-                }
+                Ok(_) => return Ok(signature),
                 Err(e) => {
                     tracing::warn!(error = %e, "broadcast failed; retrying");
                     last_err = Some(e);
@@ -490,31 +575,116 @@ impl SolanaCtx {
         )))
     }
 
-    /// Poll the signature status until confirmed or timed out (~90 s).
-    async fn confirm(&self, sig: &Signature) -> Result<(), TxError> {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
-        while tokio::time::Instant::now() < deadline {
-            let statuses = self
-                .rpc
-                .get_signature_statuses(&[*sig])
-                .await
-                .map_err(|e| TxError::Rpc(format!("status check failed: {e}")))?
-                .value; // unwrap the Response envelope
-            match statuses.first().and_then(|s| s.to_owned()) {
-                Some(status) => {
-                    if let Some(err) = status.err {
-                        return Err(TxError::Simulation(format!("transaction failed: {err}")));
-                    }
-                    // `confirmations` is Some until finalized; None = finalized.
-                    if status.confirmation_status.is_some() {
-                        return Ok(()); // confirmed (or better)
-                    }
+    /// Current on-chain status of a signature. Only `confirmed`/`finalized`
+    /// count as landed — `processed` can still be rolled back.
+    pub async fn signature_status(&self, signature: &str) -> Result<SigStatus, TxError> {
+        if self.mock {
+            return Ok(SigStatus::Confirmed);
+        }
+        let sig = Signature::from_str(signature)
+            .map_err(|e| TxError::Invalid(format!("bad signature {signature:?}: {e}")))?;
+        let statuses = self
+            .rpc
+            .get_signature_statuses(&[sig])
+            .await
+            .map_err(|e| TxError::Rpc(format!("status check failed: {e}")))?
+            .value;
+        Ok(match statuses.into_iter().next().flatten() {
+            None => SigStatus::Unknown,
+            Some(s) => match &s.err {
+                Some(err) => SigStatus::Failed(err.to_string()),
+                None if s.satisfies_commitment(CommitmentConfig::confirmed()) => {
+                    SigStatus::Confirmed
                 }
-                None => { /* not seen yet */ }
+                None => SigStatus::Processed,
+            },
+        })
+    }
+
+    /// Poll a signature for up to `timeout`, returning as soon as it is
+    /// confirmed or failed (otherwise the last status seen). Callers hand any
+    /// still-pending signature to the `tx_confirm` worker job.
+    pub async fn wait_for(&self, signature: &str, timeout: Duration) -> SigStatus {
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut last = SigStatus::Unknown;
+        loop {
+            match self.signature_status(signature).await {
+                Ok(s @ (SigStatus::Confirmed | SigStatus::Failed(_))) => return s,
+                Ok(s) => last = s,
+                Err(e) => tracing::warn!(error = %e, "signature status check failed"),
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return last;
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
-        Err(TxError::NotConfirmed)
+    }
+
+    /// Current block height (confirmed). Used to decide that an unseen
+    /// signature's blockhash has expired, so the tx can never land.
+    pub async fn block_height(&self) -> Result<u64, TxError> {
+        if self.mock {
+            return Ok(0);
+        }
+        self.rpc
+            .get_block_height_with_commitment(CommitmentConfig::confirmed())
+            .await
+            .map_err(|e| TxError::Rpc(format!("block height failed: {e}")))
+    }
+
+    /// Check that a transaction coming back from the user's wallet is the
+    /// exact one we built and validated: identical message bytes (so no
+    /// instruction, account, amount or fee was changed or dropped) and a
+    /// valid signature from every required signer.
+    pub fn check_signed(
+        signed: &VersionedTransaction,
+        expected_message: &[u8],
+    ) -> Result<(), TxError> {
+        if signed.message.serialize() != expected_message {
+            return Err(TxError::Validation(
+                "signed transaction does not match the transaction we built".into(),
+            ));
+        }
+        let required = signed.message.header().num_required_signatures as usize;
+        let results = signed.verify_with_results();
+        if results.len() != required || !results.iter().all(|ok| *ok) {
+            return Err(TxError::Validation(
+                "transaction signatures are missing or invalid".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// ComputeBudget audit: at most one CU limit (within the runtime cap) and
+    /// at most one CU price equal to our configured priority fee. Anything
+    /// else (heap frames, foreign prices) is rejected.
+    fn check_compute_budget(
+        &self,
+        i: usize,
+        data: &[u8],
+        limit_seen: &mut bool,
+        price_seen: &mut bool,
+    ) -> Result<(), TxError> {
+        let reject = |why: &str| Err(TxError::Validation(format!("instruction {i}: {why}")));
+        match data.first() {
+            Some(&CB_SET_COMPUTE_UNIT_LIMIT) if data.len() == 5 && !*limit_seen => {
+                let limit = u32::from_le_bytes(data[1..5].try_into().unwrap());
+                if limit > MAX_CU_LIMIT {
+                    return reject("compute unit limit above runtime maximum");
+                }
+                *limit_seen = true;
+                Ok(())
+            }
+            Some(&CB_SET_COMPUTE_UNIT_PRICE) if data.len() == 9 && !*price_seen => {
+                let price = u64::from_le_bytes(data[1..9].try_into().unwrap());
+                if price != self.priority_fee_microlamports {
+                    return reject("unexpected priority fee");
+                }
+                *price_seen = true;
+                Ok(())
+            }
+            _ => reject("unexpected compute budget instruction"),
+        }
     }
 
     /// Cheap liveness probe for /readyz: can we reach the RPC at all?
@@ -535,12 +705,6 @@ fn decode_transfer_checked(data: &[u8], accounts: &[Pubkey]) -> Option<(Pubkey, 
     let mut amount_bytes = [0u8; 8];
     amount_bytes.copy_from_slice(&data[1..9]);
     Some((accounts[0], accounts[2], u64::from_le_bytes(amount_bytes)))
-}
-
-/// Deterministic fake signature for mock/dev mode.
-pub fn mock_signature() -> String {
-    let sig = [7u8; 64]; // recognizable, obviously fake
-    bs58::encode(sig).into_string()
 }
 
 #[cfg(test)]
@@ -757,6 +921,162 @@ mod tests {
             .assemble_with_blockhash(&user, legs, Some(75_000), 400_000, zero_hash())
             .unwrap();
         assert!(ctx.encoded_size(&tx) <= MAX_TX_SIZE);
+    }
+
+    /// Production-mode context (System program NOT allowed).
+    fn real_ctx() -> SolanaCtx {
+        SolanaCtx {
+            mock: false,
+            ..ctx()
+        }
+    }
+
+    fn purchase_tx(ctx: &SolanaCtx, user: Pubkey, extra: Vec<Instruction>) -> VersionedTransaction {
+        let mut legs = vec![leg_instruction(user)];
+        legs.push(extra);
+        ctx.assemble_with_blockhash(&user, legs, Some(75_000), 400_000, zero_hash())
+            .unwrap()
+    }
+
+    #[test]
+    fn compute_budget_uses_runtime_tags() {
+        let ixs = ctx().compute_budget_instructions(400_000);
+        assert_eq!(ixs[0].data[0], CB_SET_COMPUTE_UNIT_LIMIT);
+        assert_eq!(ixs[0].data[1..], 400_000u32.to_le_bytes());
+        assert_eq!(ixs[1].data[0], CB_SET_COMPUTE_UNIT_PRICE);
+        assert_eq!(ixs[1].data[1..], 5_000u64.to_le_bytes());
+    }
+
+    #[test]
+    fn validate_rejects_system_program_outside_mock() {
+        let ctx = real_ctx();
+        let user = Pubkey::new_unique();
+        let drain = Instruction {
+            program_id: Pubkey::from_str(SYSTEM_PROGRAM).unwrap(),
+            accounts: vec![
+                AccountMeta::new(user, true),
+                AccountMeta::new(Pubkey::new_unique(), false),
+            ],
+            data: vec![2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0], // system transfer
+        };
+        let tx = purchase_tx(&ctx, user, vec![drain]);
+        assert!(ctx.validate(&tx, &user, Some(75_000)).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_extra_token_instructions() {
+        let ctx = real_ctx();
+        let user = Pubkey::new_unique();
+        let token = Pubkey::from_str(TOKEN_PROGRAM).unwrap();
+        let attacker = Pubkey::new_unique();
+
+        // An `approve` (tag 4) delegating the user's USDC to someone else.
+        let approve = Instruction {
+            program_id: token,
+            accounts: vec![
+                AccountMeta::new(ctx.user_usdc_ata(&user), false),
+                AccountMeta::new_readonly(attacker, false),
+                AccountMeta::new_readonly(user, true),
+            ],
+            data: [vec![4u8], 1_000_000u64.to_le_bytes().to_vec()].concat(),
+        };
+        let tx = purchase_tx(&ctx, user, vec![approve]);
+        assert!(ctx.validate(&tx, &user, Some(75_000)).is_err());
+
+        // A second transfer_checked to a wallet that is not ours.
+        let mut steal = ctx.fee_instruction(&user, 75_000).unwrap();
+        steal.accounts[2].pubkey = attacker;
+        let tx = purchase_tx(&ctx, user, vec![steal]);
+        assert!(ctx.validate(&tx, &user, Some(75_000)).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_foreign_priority_fee() {
+        let ctx = real_ctx();
+        let user = Pubkey::new_unique();
+        // Assembly strips leg compute-budget instructions...
+        let leg = vec![ComputeBudgetInstruction::set_compute_unit_price(
+            u64::MAX / 2,
+        )];
+        let tx = ctx
+            .assemble_with_blockhash(&user, vec![leg], Some(75_000), 400_000, zero_hash())
+            .unwrap();
+        assert!(ctx.validate(&tx, &user, Some(75_000)).is_ok());
+
+        // ...and validation independently rejects a tx that carries a huge
+        // foreign priority fee (would drain SOL as fees).
+        let ixs = vec![
+            ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+            ComputeBudgetInstruction::set_compute_unit_price(u64::MAX / 2),
+            ctx.fee_instruction(&user, 75_000).unwrap(),
+        ];
+        let message = v0::Message::try_compile(&user, &ixs, &[], zero_hash()).unwrap();
+        let tx = VersionedTransaction {
+            signatures: vec![Signature::default()],
+            message: VersionedMessage::V0(message),
+        };
+        assert!(ctx.validate(&tx, &user, Some(75_000)).is_err());
+    }
+
+    #[test]
+    fn validate_accepts_real_mode_purchase() {
+        let ctx = real_ctx();
+        let user = Pubkey::new_unique();
+        let tx = ctx
+            .assemble_with_blockhash(
+                &user,
+                vec![leg_instruction(user)],
+                Some(75_000),
+                400_000,
+                zero_hash(),
+            )
+            .unwrap();
+        assert!(ctx.validate(&tx, &user, Some(75_000)).is_ok());
+    }
+
+    #[test]
+    fn check_signed_requires_identical_message_and_valid_signature() {
+        use solana_sdk::signer::{keypair::Keypair, Signer};
+        let ctx = real_ctx();
+        let kp = Keypair::new();
+        let user = kp.pubkey();
+        let built = ctx
+            .assemble_with_blockhash(
+                &user,
+                vec![leg_instruction(user)],
+                Some(75_000),
+                400_000,
+                zero_hash(),
+            )
+            .unwrap();
+        let built_bytes = built.message.serialize();
+
+        // Unsigned (zeroed signature) -> rejected.
+        assert!(SolanaCtx::check_signed(&built, &built_bytes).is_err());
+
+        // Properly signed -> accepted, and the signature is known up front.
+        let signed = VersionedTransaction::try_new(built.message.clone(), &[&kp]).unwrap();
+        assert!(SolanaCtx::check_signed(&signed, &built_bytes).is_ok());
+        assert!(SolanaCtx::signature_of(&signed).is_ok());
+
+        // A different tx (fee instruction dropped), even validly signed -> rejected.
+        let no_fee = ctx
+            .assemble_with_blockhash(
+                &user,
+                vec![leg_instruction(user)],
+                None,
+                400_000,
+                zero_hash(),
+            )
+            .unwrap();
+        let no_fee_signed = VersionedTransaction::try_new(no_fee.message, &[&kp]).unwrap();
+        assert!(SolanaCtx::check_signed(&no_fee_signed, &built_bytes).is_err());
+
+        // Right message, wrong signer -> rejected.
+        let other = Keypair::new();
+        let mut forged = signed.clone();
+        forged.signatures[0] = other.sign_message(&built_bytes);
+        assert!(SolanaCtx::check_signed(&forged, &built_bytes).is_err());
     }
 
     // Config plumbing sanity: the new fields exist with documented defaults.
