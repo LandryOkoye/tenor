@@ -9,6 +9,7 @@
 //! flagged "modified outside APP" (brief §7.6).
 
 use axum::{extract::State, Json};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
@@ -21,93 +22,101 @@ use crate::panta;
 use crate::queries;
 use crate::state::AppState;
 
+/// Order statuses that mean "the user actually holds (or held) these shares".
+/// Quoted/built/submitted/failed orders never touched the chain.
+const HELD_STATUSES: [&str; 4] = ["filled", "resolved_win", "resolved_loss", "claimed"];
+
 /// `GET /v1/portfolio`
+///
+/// Share attribution: the wallet's on-chain shares per (market, side) are
+/// handed out to our basket legs first (up to what each leg recorded); any
+/// shares left over are shown as a single position — with a cost basis when
+/// they came from single-market orders placed through the app. Nothing is
+/// counted twice, even when two baskets hold the same market and side.
 pub async fn portfolio(
     State(state): State<AppState>,
     user: AuthUser,
 ) -> Result<Json<Portfolio>, AppError> {
-    let client = state.db.get().await?;
-
     // 1. Chain truth: what the wallet actually holds (shares, claimable).
     let chain_positions = state.panta.positions(&user.wallet).await?;
+    let client = state.db.get().await?;
 
-    // 2. Our truth: every order we recorded for this user.
-    let orders = queries::portfolio::orders_for_user(&client, user.user_id).await?;
+    // 2. Our truth: orders that really filled.
+    let orders: Vec<queries::portfolio::PortfolioOrder> =
+        queries::portfolio::orders_for_user(&client, user.user_id)
+            .await?
+            .into_iter()
+            .filter(|o| HELD_STATUSES.contains(&o.status.as_str()))
+            .collect();
 
-    // Map for on-chain share lookup: (market_id, side) -> shares in base units.
-    let chain_shares = |market_id: &str, side: &str| -> Option<i64> {
+    // Unattributed on-chain shares per (market, side), consumed as we go.
+    let mut unattributed: HashMap<(String, String), i64> = HashMap::new();
+    for p in &chain_positions {
+        if let Some(shares) = p.usdc_human_to_base_shares() {
+            *unattributed
+                .entry((p.market_id.clone(), p.side.clone()))
+                .or_default() += shares;
+        }
+    }
+    let claimable = |market_id: &str, side: &str| {
         chain_positions
             .iter()
-            .find(|p| p.market_id == market_id && p.side == side)
-            .and_then(|p| p.usdc_human_to_base_shares())
+            .any(|p| p.market_id == market_id && p.side == side && p.claimable)
     };
 
-    // 3. Valuation helper per Panta's documented rule set (docs/panta-notes):
-    //    open -> shares × side price; resolved win -> shares × 1; loss -> 0.
-    let value_of = |shares_base: i64,
-                    order: &queries::portfolio::PortfolioOrder|
-     -> (String, Option<String>) {
-        let side_price = if order.side == "yes" {
-            &order.yes_price
-        } else {
-            &order.no_price
-        };
-        if order.resolved {
-            let won = order.outcome.as_deref() == Some(order.side.as_str());
-            let value = if won { shares_base } else { 0 };
-            (value.to_string(), side_price.clone())
-        } else {
-            let price_base = side_price
-                .as_deref()
-                .and_then(|p| panta::usdc_human_to_base(p).ok())
-                .unwrap_or(1_000_000);
-            (
-                (shares_base * price_base / 1_000_000).to_string(),
-                side_price.clone(),
-            )
-        }
-    };
-
-    // 4. Basket groupings: orders linked to a purchase, keyed by purchase.
-    //    (The smoke flow and the basket endpoints create these links.)
-    let mut basket_orders: std::collections::HashMap<
-        Uuid,
-        Vec<&queries::portfolio::PortfolioOrder>,
-    > = std::collections::HashMap::new();
-    for o in &orders {
+    // 3. Baskets: legs grouped by purchase (oldest purchase first, so the
+    //    attribution is stable between calls).
+    let mut basket_orders: HashMap<Uuid, Vec<&queries::portfolio::PortfolioOrder>> = HashMap::new();
+    for o in orders.iter().rev() {
         if let Some(pid) = o.basket_purchase_id {
             basket_orders.entry(pid).or_default().push(o);
         }
     }
+    let mut purchase_ids: Vec<Uuid> = basket_orders.keys().copied().collect();
+    purchase_ids.sort_by_key(|pid| basket_orders[pid][0].created_at);
 
-    let mut baskets = Vec::with_capacity(basket_orders.len());
+    let mut baskets = Vec::with_capacity(purchase_ids.len());
     let mut total_value: i64 = 0;
     let mut total_cost: i64 = 0;
 
-    for (purchase_id, legs) in basket_orders {
+    for purchase_id in purchase_ids {
+        let legs = &basket_orders[&purchase_id];
         let mut leg_views = Vec::with_capacity(legs.len());
-        let mut cost: i64 = 0;
-        let mut value: i64 = 0;
-        let mut resolved_count = 0;
+        let (mut cost, mut value, mut resolved_count) = (0i64, 0i64, 0i32);
         let mut modified_outside = false;
 
-        for leg in &legs {
+        for leg in legs {
             cost += leg.amount_usdc;
-            let on_chain = chain_shares(&leg.market_id, &leg.side);
             let recorded = leg.expected_shares.unwrap_or(0);
-            // Modified outside APP: the chain has fewer shares than we recorded.
-            if let Some(actual) = on_chain {
-                if actual < recorded {
-                    modified_outside = true;
+            let key = (leg.market_id.clone(), leg.side.clone());
+
+            // Claimed legs were paid out already; they hold nothing now.
+            let shares = if leg.status == "claimed" {
+                0
+            } else {
+                match unattributed.get_mut(&key) {
+                    Some(available) => {
+                        let take = recorded.min(*available);
+                        if take < recorded {
+                            modified_outside = true; // fewer shares than we bought
+                        }
+                        *available -= take;
+                        take
+                    }
+                    // Not on chain (yet): the positions indexer lags fresh buys.
+                    None => recorded,
                 }
-            }
-            let (leg_value, _price) = value_of(on_chain.unwrap_or(recorded), leg);
-            let leg_value_i = leg_value.parse::<i64>().unwrap_or(0);
-            value += leg_value_i;
-            if leg.status == "resolved_win"
-                || leg.status == "resolved_loss"
-                || leg.status == "claimed"
-            {
+            };
+            let leg_value = if leg.status == "claimed" {
+                0
+            } else {
+                value_of(shares, leg.amount_usdc, leg)
+            };
+            value += leg_value;
+            if matches!(
+                leg.status.as_str(),
+                "resolved_win" | "resolved_loss" | "claimed"
+            ) {
                 resolved_count += 1;
             }
             leg_views.push(PortfolioBasketLeg {
@@ -117,21 +126,14 @@ pub async fn portfolio(
                     .market_title
                     .clone()
                     .unwrap_or_else(|| leg.market_id.clone()),
-                side: if leg.side == "yes" {
-                    Side::Yes
-                } else {
-                    Side::No
-                },
-                shares: on_chain.map(|s| s.to_string()),
+                side: side_of(&leg.side),
+                shares: Some(shares.to_string()),
                 status: parse_leg_status(&leg.status),
-                value_usdc: leg_value_i.to_string(),
-                claimable: chain_positions
-                    .iter()
-                    .any(|p| p.market_id == leg.market_id && p.side == leg.side && p.claimable),
+                value_usdc: leg_value.to_string(),
+                claimable: claimable(&leg.market_id, &leg.side),
             });
         }
 
-        // Purchase-level info (slug/title for display).
         let purchase = queries::baskets::get_purchase(&client, purchase_id).await?;
         let (slug, title) = match &purchase {
             Some(p) => (p.template_slug.clone(), p.template_title.clone()),
@@ -155,23 +157,25 @@ pub async fn portfolio(
         });
     }
 
-    // 5. Single positions: on-chain holdings with no linked basket order.
-    //    (A user may hold shares bought elsewhere — we still show them.)
-    let basket_legs: std::collections::HashSet<(String, String)> = orders
-        .iter()
-        .filter_map(|o| {
-            o.basket_purchase_id
-                .map(|_| (o.market_id.clone(), o.side.clone()))
-        })
-        .collect();
+    // 4. Single positions: on-chain shares not attributed to a basket leg.
+    //    Cost basis comes from the app's own single-market orders, if any.
+    let mut single_cost: HashMap<(String, String), i64> = HashMap::new();
+    for o in orders.iter().filter(|o| o.basket_purchase_id.is_none()) {
+        *single_cost
+            .entry((o.market_id.clone(), o.side.clone()))
+            .or_default() += o.amount_usdc;
+    }
+
     let mut single_positions = Vec::new();
     for pos in &chain_positions {
-        if basket_legs.contains(&(pos.market_id.clone(), pos.side.clone())) {
-            continue; // counted inside a basket above
+        let key = (pos.market_id.clone(), pos.side.clone());
+        let shares = unattributed.remove(&key).unwrap_or(0);
+        if shares <= 0 && !pos.claimable {
+            continue; // fully covered by basket legs
         }
-        let shares = pos.usdc_human_to_base_shares().unwrap_or(0);
-        let market_row = queries::markets::get_market(&client, &pos.market_id).await?;
-        let (price, resolved, outcome, title) = match market_row {
+        let market = queries::markets::get_market(&client, &pos.market_id).await?;
+        let cost = single_cost.get(&key).copied();
+        let (price, resolved, outcome, title) = match market {
             Some(m) => (
                 if pos.side == "yes" {
                     m.yes_price
@@ -188,9 +192,9 @@ pub async fn portfolio(
             id: Uuid::nil(),
             basket_purchase_id: None,
             market_id: pos.market_id.clone(),
-            market_title: title,
+            market_title: title.clone(),
             side: pos.side.clone(),
-            amount_usdc: 0,
+            amount_usdc: cost.unwrap_or(0),
             expected_shares: Some(shares),
             status: "filled".into(),
             tx_signature: None,
@@ -201,25 +205,20 @@ pub async fn portfolio(
             resolved,
             outcome,
         };
-        let (value, current_price) = value_of(shares, &pseudo);
-        let value_i = value.parse::<i64>().unwrap_or(0);
-        total_value += value_i;
+        let value = value_of(shares, cost.unwrap_or(0), &pseudo);
+        total_value += value;
+        if let Some(c) = cost {
+            total_cost += c;
+        }
         single_positions.push(PortfolioPosition {
             market_id: pos.market_id.clone(),
-            market_title: pseudo
-                .market_title
-                .clone()
-                .unwrap_or_else(|| pos.market_id.clone()),
-            side: if pos.side == "yes" {
-                Side::Yes
-            } else {
-                Side::No
-            },
+            market_title: title.unwrap_or_else(|| pos.market_id.clone()),
+            side: side_of(&pos.side),
             shares: shares.to_string(),
-            current_price,
-            value_usdc: value_i.to_string(),
-            cost_basis_usdc: None, // not one of ours; cost is unknown
-            unrealized_pnl_usdc: None,
+            current_price: price,
+            value_usdc: value.to_string(),
+            cost_basis_usdc: cost.map(|c| c.to_string()),
+            unrealized_pnl_usdc: cost.map(|c| (value - c).to_string()),
             resolved: pos.outcome.is_some(),
             won: pos.outcome.as_ref().map(|o| o == &pos.side),
             claimable: pos.claimable,
@@ -234,6 +233,40 @@ pub async fn portfolio(
         total_cost_basis_usdc: total_cost.to_string(),
         total_unrealized_pnl_usdc: (total_value - total_cost).to_string(),
     }))
+}
+
+/// Valuation per Panta's documented rules (docs/panta-notes.md):
+/// resolved win -> 1 USDC/share, resolved loss -> 0, open -> shares × side
+/// price. An open market with no price yet is carried at cost (neutral P&L)
+/// rather than inventing a value.
+fn value_of(shares_base: i64, cost_base: i64, order: &queries::portfolio::PortfolioOrder) -> i64 {
+    if order.resolved {
+        return match order.outcome.as_deref() {
+            Some(o) if o == order.side => shares_base,
+            Some(_) => 0,
+            None => cost_base, // resolved flag without an outcome yet
+        };
+    }
+    let side_price = if order.side == "yes" {
+        &order.yes_price
+    } else {
+        &order.no_price
+    };
+    match side_price
+        .as_deref()
+        .and_then(|p| panta::usdc_human_to_base(p).ok())
+    {
+        Some(price_base) => (shares_base as i128 * price_base as i128 / 1_000_000) as i64,
+        None => cost_base,
+    }
+}
+
+fn side_of(s: &str) -> Side {
+    if s == "yes" {
+        Side::Yes
+    } else {
+        Side::No
+    }
 }
 
 /// `GET /v1/portfolio/activity` — orders + claims, newest first.

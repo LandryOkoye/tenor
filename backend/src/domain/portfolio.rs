@@ -102,14 +102,31 @@ pub struct ClaimsBuildRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ClaimsBuildResponse {
+    /// Pass back to `POST /v1/claims/submit` with the signed transaction.
+    pub claim_id: Uuid,
+    /// Markets covered by this transaction.
+    pub market_ids: Vec<String>,
+    /// Markets that did not fit in this transaction ("claim all" with many
+    /// wins): build again with these after this one is submitted.
+    pub remaining_market_ids: Vec<String>,
     pub transactions: Vec<String>,
     pub summary: crate::domain::order::TxSummary,
     pub total_claimable_usdc: String,
 }
 
+/// `POST /v1/claims/submit`
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ClaimsSubmitRequest {
+    pub claim_id: Uuid,
+    pub signed_txs: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ClaimsSubmitResponse {
+    pub claim_id: Uuid,
     pub signatures: Vec<String>,
+    /// `submitted` (still confirming) | `confirmed` | `failed`
     pub status: String,
 }
