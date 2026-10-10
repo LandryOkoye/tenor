@@ -39,6 +39,10 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "0005_markets_resolved",
         include_str!("../migrations/0005_markets_resolved.sql"),
     ),
+    (
+        "0006_tx_integrity",
+        include_str!("../migrations/0006_tx_integrity.sql"),
+    ),
 ];
 
 /// Parse a `postgres://user:pass@host:port/db` URL and build a connection pool.
