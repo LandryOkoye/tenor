@@ -89,19 +89,44 @@ pub async fn get_order(
 }
 
 /// Order built at Panta + assembled into a transaction by us.
+/// `built_message`/`last_valid_block_height` are set for single-market
+/// orders (basket legs keep them on the purchase row).
 pub async fn mark_built(
     client: &Client,
     order_id: Uuid,
     panta_order_id: &str,
+    built_message: Option<&[u8]>,
+    last_valid_block_height: Option<i64>,
 ) -> Result<(), tokio_postgres::Error> {
     client
         .execute(
-            "UPDATE orders SET status = 'built', panta_order_id = $2, updated_at = now()
+            "UPDATE orders SET status = 'built', panta_order_id = $2, built_message = $3,
+                               last_valid_block_height = $4, updated_at = now()
              WHERE id = $1",
-            &[&order_id, &panta_order_id],
+            &[
+                &order_id,
+                &panta_order_id,
+                &built_message,
+                &last_valid_block_height,
+            ],
         )
         .await?;
     Ok(())
+}
+
+/// The message bytes + blockhash expiry recorded when the order was built.
+pub async fn build_info(
+    client: &Client,
+    order_id: Uuid,
+) -> Result<Option<(Vec<u8>, Option<i64>)>, tokio_postgres::Error> {
+    let row = client
+        .query_opt(
+            "SELECT built_message, last_valid_block_height FROM orders
+             WHERE id = $1 AND built_message IS NOT NULL",
+            &[&order_id],
+        )
+        .await?;
+    Ok(row.map(|r| (r.get(0), r.get(1))))
 }
 
 /// Link an order to the basket purchase it belongs to (legs of a basket).
@@ -119,20 +144,41 @@ pub async fn link_to_purchase(
     Ok(())
 }
 
-/// Signed by the user and broadcast; awaiting confirmation.
+/// Signed by the user and about to be broadcast. Only moves `built` orders,
+/// so a double submit cannot record two signatures. Returns false if the
+/// order was not in `built` anymore.
 pub async fn mark_submitted(
     client: &Client,
     order_id: Uuid,
     signature: &str,
-) -> Result<(), tokio_postgres::Error> {
-    client
+) -> Result<bool, tokio_postgres::Error> {
+    let n = client
         .execute(
             "UPDATE orders SET status = 'submitted', tx_signature = $2, updated_at = now()
-             WHERE id = $1",
+             WHERE id = $1 AND status = 'built'",
             &[&order_id, &signature],
         )
         .await?;
-    Ok(())
+    Ok(n == 1)
+}
+
+/// Move an order from `from` to `to` (no-op if it is not in `from`).
+/// Keeps settlement idempotent when the API and the worker race.
+pub async fn transition(
+    client: &Client,
+    order_id: Uuid,
+    from: &str,
+    to: &str,
+    error_code: Option<&str>,
+) -> Result<bool, tokio_postgres::Error> {
+    let n = client
+        .execute(
+            "UPDATE orders SET status = $3, error_code = $4, updated_at = now()
+             WHERE id = $1 AND status = $2",
+            &[&order_id, &from, &to, &error_code],
+        )
+        .await?;
+    Ok(n == 1)
 }
 
 /// Terminal state transitions during confirmation.
@@ -152,22 +198,86 @@ pub async fn set_status(
     Ok(())
 }
 
-/// Record the transaction signature in the shared transactions table.
+/// Record a signature in the shared transactions table BEFORE broadcasting,
+/// linked to the record it settles (`ref_id`) so the tx_confirm job can
+/// finish the flow if the request dies. Returns false if the signature was
+/// already known (the same signed tx can only ever land once).
 pub async fn insert_transaction(
     client: &Client,
     signature: &str,
     user_id: Uuid,
     kind: &str, // order | basket | claim
-) -> Result<(), tokio_postgres::Error> {
-    client
+    ref_id: Uuid,
+    last_valid_block_height: Option<i64>,
+) -> Result<bool, tokio_postgres::Error> {
+    let n = client
         .execute(
-            "INSERT INTO transactions (signature, user_id, kind, status)
-             VALUES ($1, $2, $3, 'submitted')
+            "INSERT INTO transactions (signature, user_id, kind, status, ref_id,
+                                       last_valid_block_height)
+             VALUES ($1, $2, $3, 'submitted', $4, $5)
              ON CONFLICT (signature) DO NOTHING",
-            &[&signature, &user_id, &kind],
+            &[
+                &signature,
+                &user_id,
+                &kind,
+                &ref_id,
+                &last_valid_block_height,
+            ],
         )
         .await?;
-    Ok(())
+    Ok(n == 1)
+}
+
+/// A broadcast transaction still waiting for a final outcome.
+pub struct PendingTx {
+    pub signature: String,
+    pub kind: String,
+    pub ref_id: Option<Uuid>,
+    pub last_valid_block_height: Option<i64>,
+}
+
+/// One pending transaction by signature.
+pub async fn get_transaction(
+    client: &Client,
+    signature: &str,
+) -> Result<Option<PendingTx>, tokio_postgres::Error> {
+    let row = client
+        .query_opt(
+            "SELECT signature, kind, ref_id, last_valid_block_height
+             FROM transactions WHERE signature = $1",
+            &[&signature],
+        )
+        .await?;
+    Ok(row.map(|r| PendingTx {
+        signature: r.get(0),
+        kind: r.get(1),
+        ref_id: r.get(2),
+        last_valid_block_height: r.get(3),
+    }))
+}
+
+/// Every transaction still in `submitted` (oldest first).
+pub async fn pending_transactions(
+    client: &Client,
+    limit: i64,
+) -> Result<Vec<PendingTx>, tokio_postgres::Error> {
+    let rows = client
+        .query(
+            "SELECT signature, kind, ref_id, last_valid_block_height
+             FROM transactions WHERE status = 'submitted'
+             ORDER BY submitted_at LIMIT $1",
+            &[&limit],
+        )
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|r| PendingTx {
+            signature: r.get(0),
+            kind: r.get(1),
+            ref_id: r.get(2),
+            last_valid_block_height: r.get(3),
+        })
+        .collect())
 }
 
 /// Mark a stored transaction as confirmed/failed.
@@ -182,7 +292,7 @@ pub async fn update_transaction_status(
             "UPDATE transactions SET status = $2, confirmed_at = CASE
                  WHEN $2 = 'confirmed' THEN now() ELSE confirmed_at END,
                  raw_error = $3
-             WHERE signature = $1",
+             WHERE signature = $1 AND status = 'submitted'",
             &[&signature, &status, &raw_error],
         )
         .await?;

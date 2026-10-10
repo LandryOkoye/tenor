@@ -18,6 +18,17 @@ pub async fn upsert_user(client: &Client, wallet: &str) -> Result<Uuid, tokio_po
     Ok(row.get(0))
 }
 
+/// Wallet pubkey of a user (settlement needs it for Panta attribution).
+pub async fn wallet_of(
+    client: &Client,
+    user_id: Uuid,
+) -> Result<Option<String>, tokio_postgres::Error> {
+    let row = client
+        .query_opt("SELECT wallet_pubkey FROM users WHERE id = $1", &[&user_id])
+        .await?;
+    Ok(row.map(|r| r.get(0)))
+}
+
 /// Create a sign-in nonce (SIWS): one-time secret embedded in the message the
 /// wallet must sign. Expires after 5 minutes, single use.
 pub async fn insert_nonce(
