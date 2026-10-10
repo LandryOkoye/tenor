@@ -223,6 +223,18 @@ fn decode_api_error(bytes: &[u8], status: u16) -> PantaError {
     }
 }
 
+/// Every value we interpolate into a Panta URL path must be a plain id
+/// (market ids, base58 wallets/signatures) — never `/`, `..` or `?`.
+fn safe_segment(value: &str) -> Result<(), PantaError> {
+    if super::is_valid_market_id(value) {
+        Ok(())
+    } else {
+        Err(PantaError::Invalid(format!(
+            "unsafe path segment {value:?}"
+        )))
+    }
+}
+
 /// Exponential backoff + jitter; honours `Retry-After` when it is larger.
 /// Jitter uses clock nanos — no extra dependency, plenty of entropy here.
 async fn sleep_backoff(attempt: u32, retry_after_secs: Option<u64>) {
@@ -263,6 +275,7 @@ impl PantaApi for HttpPanta {
     }
 
     async fn get_market(&self, market_id: &str) -> Result<MarketRow, PantaError> {
+        safe_segment(market_id)?;
         let path = format!("markets/{market_id}/"); // trailing slash required
         self.get(&self.lim_read, &path, &[]).await
     }
@@ -272,6 +285,7 @@ impl PantaApi for HttpPanta {
         market_id: &str,
         limit: u32,
     ) -> Result<Vec<TradeRow>, PantaError> {
+        safe_segment(market_id)?;
         let path = format!("markets/{market_id}/trades/");
         let resp: MarketTradesResponse = self
             .get(&self.lim_read, &path, &[("limit", limit.to_string())])
@@ -280,6 +294,7 @@ impl PantaApi for HttpPanta {
     }
 
     async fn wallet_trades(&self, wallet: &str, limit: u32) -> Result<Vec<TradeRow>, PantaError> {
+        safe_segment(wallet)?;
         let path = format!("wallets/{wallet}/trades/");
         let resp: WalletTradesResponse = self
             .get(&self.lim_read, &path, &[("limit", limit.to_string())])
@@ -368,6 +383,7 @@ impl PantaApi for HttpPanta {
         if signature.is_empty() {
             return Err(PantaError::Invalid("signature is required".into()));
         }
+        safe_segment(signature)?;
         let path = format!("trades/{signature}/");
         self.get(&self.lim_read, &path, &[]).await
     }

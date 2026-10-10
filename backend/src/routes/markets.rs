@@ -133,22 +133,52 @@ pub async fn list(
     }))
 }
 
+/// Reject market ids that are not plain Panta ids before they are used in a
+/// Panta URL path or a query (no `/`, `..`, `?`, spaces, …).
+pub fn check_market_id(market_id: &str) -> Result<(), AppError> {
+    if crate::panta::is_valid_market_id(market_id) {
+        Ok(())
+    } else {
+        Err(AppError::bad_request(
+            "INVALID_MARKET_ID",
+            "market id is malformed",
+        ))
+    }
+}
+
+/// Make sure a market row exists locally (orders and basket legs reference
+/// it), fetching it from Panta once if we have never seen it.
+pub async fn ensure_market(state: &AppState, market_id: &str) -> Result<(), AppError> {
+    check_market_id(market_id)?;
+    let client = state.db.get().await?;
+    if queries::markets::get_market(&client, market_id)
+        .await?
+        .is_none()
+    {
+        drop(client); // don't hold the connection across the Panta call
+        let row = state.panta.get_market(market_id).await?;
+        let client = state.db.get().await?;
+        queries::markets::upsert_market(&client, &row).await?;
+    }
+    Ok(())
+}
+
 /// `GET /v1/markets/{id}` — one market. Falls back to a live Panta fetch
 /// (+ upsert) when we have never seen this market.
 pub async fn detail(
     State(state): State<AppState>,
     Path(market_id): Path<String>,
 ) -> Result<Json<MarketDetail>, AppError> {
-    let client = state.db.get().await?;
-
-    if let Some(detail) = queries::markets::market_detail(&client, &market_id).await? {
-        return Ok(Json(detail));
+    check_market_id(&market_id)?;
+    {
+        let client = state.db.get().await?;
+        if let Some(detail) = queries::markets::market_detail(&client, &market_id).await? {
+            return Ok(Json(detail));
+        }
     }
 
     // Unknown locally: ask Panta once, cache the answer, serve it.
-    let row = state.panta.get_market(&market_id).await?;
-    queries::markets::upsert_market(&client, &row).await?;
-    drop(client);
+    ensure_market(&state, &market_id).await?;
     let client = state.db.get().await?;
     queries::markets::market_detail(&client, &market_id)
         .await?
@@ -164,6 +194,7 @@ pub async fn history(
     Path(market_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<MarketHistory>, AppError> {
+    check_market_id(&market_id)?;
     let range = params.get("range").map(String::as_str).unwrap_or("all");
     let since = match range {
         "1d" => Some(Utc::now() - chrono::Duration::days(1)),
@@ -181,39 +212,63 @@ pub async fn history(
     }))
 }
 
+/// How long a market's trade tape is cached (protects our Panta read budget
+/// from anonymous traffic; the tape is "recent trades", not tick data).
+const TRADES_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
+type TradesCache = HashMap<String, (std::time::Instant, Vec<MarketTrade>)>;
+static TRADES_CACHE: std::sync::LazyLock<Mutex<TradesCache>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
 /// `GET /v1/markets/{id}/trades` — the public trade tape (Panta data,
 /// proxied through our backend so the API key never reaches the browser).
+/// Cached per market for 30 s.
 pub async fn trades(
     State(state): State<AppState>,
     Path(market_id): Path<String>,
 ) -> Result<Json<Vec<MarketTrade>>, AppError> {
-    let rows = state.panta.market_trades(&market_id, 50).await?;
+    check_market_id(&market_id)?;
+    if let Some((at, cached)) = TRADES_CACHE.lock().await.get(&market_id) {
+        if at.elapsed() < TRADES_CACHE_TTL {
+            return Ok(Json(cached.clone()));
+        }
+    }
 
-    Ok(Json(
-        rows.into_iter()
-            .map(|t| {
-                let (yes_amount, no_amount, fee_paid) = (
-                    t.yes_amount.as_ref().map(|v| v.as_str()),
-                    t.no_amount.as_ref().map(|v| v.as_str()),
-                    t.fee_paid.as_ref().map(|v| v.as_str()),
-                );
-                // The "side" of a tape row: whichever share amount is nonzero.
-                let side = match (&yes_amount, &no_amount) {
-                    (Some(_), None) => Some(crate::domain::Side::Yes),
-                    (None, Some(_)) => Some(crate::domain::Side::No),
-                    _ => None,
-                };
-                MarketTrade {
-                    signature: t.signature,
-                    side,
-                    amount_usdc: fee_paid.map(|f| f.to_string()),
-                    shares: yes_amount.or(no_amount).map(|s| s.to_string()),
-                    price: None, // Panta's tape has amounts, not per-trade prices
-                    ts: t
-                        .block_time
-                        .and_then(|s| chrono::Utc.timestamp_opt(s, 0).single()),
-                }
-            })
-            .collect(),
-    ))
+    let rows = state.panta.market_trades(&market_id, 50).await?;
+    let trades: Vec<MarketTrade> = rows
+        .into_iter()
+        .map(|t| {
+            // Tape rows carry share amounts per side; a zero/absent amount
+            // means the trade was on the other side.
+            let nonzero = |v: &Option<crate::panta::StringOrNum>| {
+                v.as_ref()
+                    .map(|v| v.as_str())
+                    .filter(|s| !s.trim_start_matches(['0', '.']).is_empty())
+            };
+            let (yes, no) = (nonzero(&t.yes_amount), nonzero(&t.no_amount));
+            let side = match (&yes, &no) {
+                (Some(_), None) => Some(crate::domain::Side::Yes),
+                (None, Some(_)) => Some(crate::domain::Side::No),
+                _ => None,
+            };
+            MarketTrade {
+                signature: t.signature,
+                side,
+                // The tape has no USDC notional (only shares + fee), so we
+                // do not invent one.
+                amount_usdc: None,
+                shares: yes.or(no),
+                price: None, // Panta's tape has amounts, not per-trade prices
+                ts: t
+                    .block_time
+                    .and_then(|s| chrono::Utc.timestamp_opt(s, 0).single()),
+            }
+        })
+        .collect();
+
+    TRADES_CACHE
+        .lock()
+        .await
+        .insert(market_id, (std::time::Instant::now(), trades.clone()));
+    Ok(Json(trades))
 }

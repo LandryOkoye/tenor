@@ -26,6 +26,16 @@ pub use error::PantaError;
 pub use mock::MockPanta;
 pub use types::*;
 
+/// Is this a plausible Panta market id? Ids are interpolated into URL paths,
+/// so only a conservative charset is accepted (letters, digits, `_`, `-`).
+pub fn is_valid_market_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
 /// Convert USDC base units -> Panta's human-readable decimal string.
 ///
 /// `20000000` -> `"20"`;  `500000` -> `"0.5"`;  `150` -> `"0.00015"`.

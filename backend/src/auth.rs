@@ -175,11 +175,8 @@ impl FromRequestParts<AppState> for AdminUser {
     ) -> Result<Self, Self::Rejection> {
         // Reuse the JWT check, then consult the allowlist.
         let user = AuthUser::from_request_parts(parts, state).await?;
-        if !state
-            .config
-            .admin_wallets
-            .iter()
-            .any(|w| w.eq_ignore_ascii_case(&user.wallet))
+        if !state.config.admin_wallets.iter().any(|w| w == &user.wallet)
+        // base58 is case-sensitive: exact match only
         {
             return Err(AppError::new(
                 axum::http::StatusCode::FORBIDDEN,

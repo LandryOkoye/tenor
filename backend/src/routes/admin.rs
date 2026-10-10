@@ -85,23 +85,11 @@ pub async fn create(
         ));
     }
 
-    let mut client = state.db.get().await?;
-
-    // Every leg's market must exist in our catalog.
+    // Every leg's market must exist in our catalog (fetched once if new).
     for spec in &specs {
-        if queries::markets::get_market(&client, &spec.market_id)
-            .await?
-            .is_none()
-        {
-            return Err(AppError::bad_request(
-                "MARKET_NOT_FOUND",
-                format!(
-                    "market {} is not in the catalog; sync first",
-                    spec.market_id
-                ),
-            ));
-        }
+        crate::routes::markets::ensure_market(&state, &spec.market_id).await?;
     }
+    let mut client = state.db.get().await?;
 
     let id = queries::baskets::create_template(
         &client,
@@ -151,8 +139,33 @@ pub async fn update(
         ));
     }
 
+    // Buy range: parse strictly and keep 0 < min <= max after the patch.
+    let min_buy = req
+        .min_buy_usdc
+        .as_deref()
+        .map(|m| parse_money("min_buy_usdc", m))
+        .transpose()?;
+    let max_buy = req
+        .max_buy_usdc
+        .as_deref()
+        .map(|m| parse_money("max_buy_usdc", m))
+        .transpose()?;
+    let (new_min, new_max) = (
+        min_buy.unwrap_or(template.min_buy_usdc),
+        max_buy.unwrap_or(template.max_buy_usdc),
+    );
+    if new_min <= 0 || new_max < new_min {
+        return Err(AppError::bad_request(
+            "INVALID_TEMPLATE",
+            "min_buy must be > 0 and <= max_buy",
+        ));
+    }
+
     // Replace legs if provided — same validation as create.
     if let Some(legs) = &req.legs {
+        for leg in legs {
+            crate::routes::markets::ensure_market(&state, &leg.market_id).await?;
+        }
         let specs = legs
             .iter()
             .map(|l| LegSpec {
@@ -181,8 +194,8 @@ pub async fn update(
         req.description.as_deref(),
         req.category.as_deref(),
         req.cover_url.as_deref(),
-        req.min_buy_usdc.as_deref().and_then(|m| m.parse().ok()),
-        req.max_buy_usdc.as_deref().and_then(|m| m.parse().ok()),
+        min_buy,
+        max_buy,
     )
     .await?;
 
@@ -246,6 +259,15 @@ pub async fn close(
 ) -> Result<Json<AdminBasketView>, AppError> {
     let id = parse_id(&id)?;
     let client = state.db.get().await?;
+    let template = queries::baskets::get_template(&client, id)
+        .await?
+        .ok_or_else(|| AppError::not_found("basket template not found"))?;
+    if !matches!(template.status.as_str(), "draft" | "published") {
+        return Err(AppError::bad_request(
+            "TEMPLATE_NOT_OPEN",
+            format!("a {} template cannot be closed", template.status),
+        ));
+    }
     queries::baskets::set_template_status(&client, id, "closed").await?;
     let view = admin_view(&state, &client, id).await?;
     Ok(Json(view))

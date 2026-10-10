@@ -99,3 +99,9 @@ Basket-eligible markets must be in `primary` (checked at quote time by Panta too
 - [ ] Whether `/primaryordersubmit/` accepts a shared signature for multiple
   order ids (spike S3).
 - [ ] Real creator/oracle fields exposure for the Resolution Center (spike S5).
+- [ ] Exact program ids + top-level instruction shapes in `/primaryorderbuild/` and
+  `/claim/build/` responses. Our safety check (`solana_tx::validate`) only allows
+  Panta programs, ATA create, our ComputeBudget pair and our fee `transfer_checked`.
+  Panta-supplied ComputeBudget instructions are dropped at assembly (we set our
+  own). If Panta returns System or Token instructions, the build is rejected —
+  record what it returns and widen the allowlist deliberately.
