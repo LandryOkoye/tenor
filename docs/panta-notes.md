@@ -91,6 +91,44 @@ Basket-eligible markets must be in `primary` (checked at quote time by Panta too
   from claim build.
 - Resolved loser: ≈ 0.
 
+## On-chain program (verified 11 October 2026 from mainnet transactions)
+
+- **Program id (mainnet):** `6gM5afTQBq5VZCfgpGqcsqzfWd5maLSCKWtGjbEobZMp` (upgradeable
+  BPF program; not published in Panta's docs — found in sonar-panta, confirmed on chain).
+  No legacy Anchor IDL account exists, but it is an Anchor program (8-byte
+  `sha256("global:<ix>")` discriminators, `account:<Name>` account discriminators).
+- **`primary_order_usdc`**: data = disc `2e89447431590df7` + `side: u8` (0 = YES, 1 = NO)
+  + `amount: u64` (USDC base units). **No slippage / min-shares argument on chain** —
+  slippage is only enforced by the API at build time.
+  Accounts (12):
+
+  | # | Account | Notes |
+  |---|---|---|
+  | 0 | buyer | signer, writable; pays position rent |
+  | 1 | `Event` (the market) | writable, 2982 bytes |
+  | 2 | `MarketConfig` | readonly, shared (`8mJjfx7S…`) |
+  | 3 | market vault authority | readonly, 9-byte program account; owns the market's USDC vault |
+  | 4 | market USDC vault | writable; ATA of #3 |
+  | 5 | `UserPosition` | writable; PDA `["position", event, buyer]`, 202 bytes, buyer pubkey at offset 41 |
+  | 6 | USDC mint | |
+  | 7 | buyer USDC account | must be the buyer's **standard ATA** |
+  | 8 | protocol fee USDC account | `9hwZLD2J…` (owner `4M2EtWmj…`) |
+  | 9–11 | Token, ATA, System programs | |
+
+- **Shares are not SPL tokens.** A buy only moves USDC (amount → market vault, 2% fee on
+  top → fee account); shares are recorded in the buyer's `UserPosition` and logged as
+  `Primary Order (USDC): side=…, amount=…, yes_price=…, no_price=…, minted=…` (prices 1e9-scaled).
+- Panta's build adds an `spl-memo` instruction to purchases.
+
+### Spike: program-owned buyer (tokenized baskets) — PASSED
+
+On a local validator cloning the mainnet program and a live market's accounts, a probe
+program called `primary_order_usdc` via `invoke_signed` with a **PDA as buyer**
+(system-owned, no data, holding SOL for rent) and the PDA's **off-curve USDC ATA** as #7.
+Result: success; 1.02 USDC left the vault ATA, `UserPosition` was created with
+`user = PDA`, ~74k CU per buy (4 legs ≈ 300k CU). So a basket vault program can hold
+Panta positions itself. Still to verify: `claim_win_usdc` via CPI on a resolved market.
+
 ## Open items to verify with real calls (need an API key)
 
 - [ ] Exact pagination cursor format for `/markets/` (opaque string in `nextCursor`).
@@ -101,7 +139,7 @@ Basket-eligible markets must be in `primary` (checked at quote time by Panta too
 - [ ] Real creator/oracle fields exposure for the Resolution Center (spike S5).
 - [ ] Exact program ids + top-level instruction shapes in `/primaryorderbuild/` and
   `/claim/build/` responses. Our safety check (`solana_tx::validate`) only allows
-  Panta programs, ATA create, our ComputeBudget pair and our fee `transfer_checked`.
+  Panta programs, ATA create, SPL Memo, our ComputeBudget pair and our fee `transfer_checked`.
   Panta-supplied ComputeBudget instructions are dropped at assembly (we set our
   own). If Panta returns System or Token instructions, the build is rejected —
   record what it returns and widen the allowlist deliberately.
