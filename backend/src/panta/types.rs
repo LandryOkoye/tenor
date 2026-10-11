@@ -54,6 +54,27 @@ pub struct MarketFilter {
 
 /// One market row from `GET /markets/` or `GET /markets/{marketId}/`.
 /// List rows leave `yes_price` / `no_price` null; the detail endpoint fills them.
+/// Market times arrive as unix seconds on live rows but as RFC 3339
+/// strings on sandbox (`pk_test_`) rows; accept both, store unix seconds.
+fn unix_or_iso<'de, D>(d: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Ts {
+        Unix(i64),
+        Iso(String),
+    }
+    match Option::<Ts>::deserialize(d)? {
+        None => Ok(None),
+        Some(Ts::Unix(n)) => Ok(Some(n)),
+        Some(Ts::Iso(s)) => DateTime::parse_from_rfc3339(&s)
+            .map(|t| Some(t.timestamp()))
+            .map_err(serde::de::Error::custom),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketRow {
     #[serde(rename = "marketId")]
@@ -69,11 +90,11 @@ pub struct MarketRow {
     pub phase: Option<String>,
     #[serde(default, rename = "marketType")]
     pub market_type: Option<String>,
-    #[serde(default, rename = "startTime")]
+    #[serde(default, rename = "startTime", deserialize_with = "unix_or_iso")]
     pub start_time: Option<i64>, // unix seconds
-    #[serde(default, rename = "endTime")]
+    #[serde(default, rename = "endTime", deserialize_with = "unix_or_iso")]
     pub end_time: Option<i64>, // unix seconds
-    #[serde(default, rename = "resolutionTime")]
+    #[serde(default, rename = "resolutionTime", deserialize_with = "unix_or_iso")]
     pub resolution_time: Option<i64>, // unix seconds
     #[serde(default)]
     pub region: Option<String>,
@@ -164,8 +185,9 @@ pub struct QuoteResponse {
     pub amount_usdc: String,
     /// Human-readable share count, e.g. "38.42".
     pub shares: String,
-    /// Average fill price, e.g. "0.520800".
-    #[serde(rename = "avgPrice")]
+    /// Average fill price, e.g. "0.520800". The sandbox (`pk_test_`) omits
+    /// it — use `avg_price()` which derives it from amount / shares.
+    #[serde(default, rename = "avgPrice")]
     pub avg_price: String,
     /// Protocol fee, human-readable USDC, e.g. "0.40".
     #[serde(rename = "feeUsdc")]
@@ -174,6 +196,27 @@ pub struct QuoteResponse {
     pub expires_at: DateTime<Utc>,
     #[serde(default, rename = "blockhashExpiryHintSec")]
     pub blockhash_expiry_hint_sec: Option<u64>,
+}
+
+impl QuoteResponse {
+    /// Average fill price: Panta's value when present, else amount / shares
+    /// (6 decimals, integer math). Empty if neither can be computed.
+    pub fn avg_price(&self) -> String {
+        if !self.avg_price.is_empty() {
+            return self.avg_price.clone();
+        }
+        let (Ok(amount), Ok(shares)) = (
+            super::usdc_human_to_base(&self.amount_usdc),
+            super::usdc_human_to_base(&self.shares),
+        ) else {
+            return String::new();
+        };
+        if shares <= 0 {
+            return String::new();
+        }
+        let price = amount as i128 * 1_000_000 / shares as i128;
+        format!("{}.{:06}", price / 1_000_000, price % 1_000_000)
+    }
 }
 
 /// `POST /primaryorderbuild/`.
@@ -437,4 +480,33 @@ pub struct WalletTradesResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CategoriesResponse {
     pub categories: Vec<String>,
+}
+
+#[cfg(test)]
+mod quote_tests {
+    use super::*;
+
+    #[test]
+    fn sandbox_quote_without_avg_price_decodes() {
+        // Verbatim shape returned by Panta for a pk_test_ key (11 Oct 2026).
+        let q: QuoteResponse = serde_json::from_str(
+            r#"{"quoteId":"qt_sandbox_test","marketId":"TestMarket1111111111111111111111111111111",
+                "wallet":"W","side":"yes","amountUsdc":"1.00","shares":"2.00","feeUsdc":"0.00",
+                "expiresAt":"2099-01-01T00:00:00Z","disclaimer":"Test mode"}"#,
+        )
+        .unwrap();
+        assert_eq!(q.avg_price(), "0.500000");
+    }
+
+    #[test]
+    fn market_times_accept_unix_and_iso() {
+        let live: MarketRow =
+            serde_json::from_str(r#"{"marketId":"m","title":"t","endTime":1798761599}"#).unwrap();
+        let sandbox: MarketRow = serde_json::from_str(
+            r#"{"marketId":"m","title":"t","endTime":"2026-12-31T23:59:59Z"}"#,
+        )
+        .unwrap();
+        assert_eq!(live.end_time, Some(1_798_761_599));
+        assert_eq!(sandbox.end_time, Some(1_798_761_599));
+    }
 }

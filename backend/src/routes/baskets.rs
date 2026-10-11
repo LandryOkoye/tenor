@@ -212,7 +212,7 @@ pub async fn quote(
             "allocation_base": alloc,
             "panta_quote_id": q.quote_id,
             "shares_base": shares,
-            "avg_price": q.avg_price,
+            "avg_price": q.avg_price(),
             "fee_base": fee,
         }));
         leg_views.push(BasketQuoteLeg {
@@ -222,7 +222,7 @@ pub async fn quote(
             weight_bps,
             allocation_usdc: alloc.to_string(),
             expected_shares: shares.to_string(),
-            avg_price: q.avg_price,
+            avg_price: q.avg_price(),
             panta_fee_usdc: fee.to_string(),
             price_impact_bps: None,
         });

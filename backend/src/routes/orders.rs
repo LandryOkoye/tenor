@@ -102,11 +102,11 @@ pub async fn quote(
 
     Ok(Json(OrderQuote {
         quote_id: order_id.to_string(),
-        market_id: quote.market_id,
+        market_id: quote.market_id.clone(),
         side: req.side,
         amount_usdc: amount.to_string(),
         expected_shares: shares_base.to_string(),
-        avg_price: quote.avg_price,
+        avg_price: quote.avg_price(),
         panta_fee_usdc: fee_base.to_string(),
         our_fee_usdc: "0".to_string(), // 0 bps on single-market buys (MVP)
         price_impact_bps: None,        // not provided by Panta's quote
@@ -436,6 +436,7 @@ mod tests {
             default_slippage_bps: 150,
             priority_fee_microlamports: 5000,
             panta_program_ids: vec![],
+            vault_program_id: None,
             jwt_secret: "test".into(),
             admin_wallets: vec![],
             blocked_countries: vec![],
