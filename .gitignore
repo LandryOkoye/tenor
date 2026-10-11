@@ -15,9 +15,9 @@ target/
 node_modules/
 dist/
 
-# ts-rs intermediate output (scripts/typegen.sh copies it to the frontend)
+# ts-rs intermediate output (scripts/typegen.sh copies it to frontend/src/api/generated,
+# which IS committed: Vercel builds the frontend without a Rust toolchain)
 backend/bindings/
-frontend/src/api/generated/
 
 # OS / editor
 .DS_Store
