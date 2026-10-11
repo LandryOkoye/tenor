@@ -105,7 +105,9 @@ impl Config {
             blocked_countries: list("BLOCKED_COUNTRIES"),
             cors_origins: list("CORS_ORIGINS"),
 
-            api_bind: optional("API_BIND", "0.0.0.0:8080"),
+            // API_BIND wins; otherwise PaaS hosts (Railway, Render, Fly) give PORT.
+            api_bind: std::env::var("API_BIND")
+                .unwrap_or_else(|_| format!("0.0.0.0:{}", optional("PORT", "8080"))),
         };
         cfg.validate()?;
         Ok(cfg)
