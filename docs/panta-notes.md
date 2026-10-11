@@ -119,6 +119,11 @@ Basket-eligible markets must be in `primary` (checked at quote time by Panta too
   top → fee account); shares are recorded in the buyer's `UserPosition` and logged as
   `Primary Order (USDC): side=…, amount=…, yes_price=…, no_price=…, minted=…` (prices 1e9-scaled).
 - Panta's build adds an `spl-memo` instruction to purchases.
+- `Event.resolved_at` (i64 unix) at offset 72: 0 while open, set on resolution (verified on 3
+  resolved vs 3 open markets). The outcome byte is not mapped yet; `yes_price` is NOT pinned
+  to 0/1 after resolution.
+- `MarketConfig` is the PDA `["market_config"]`; the market vault authority is a `TokenVault`
+  account (9 bytes: discriminator + bump) whose seeds are unknown — read it from a past buy.
 - `Event` timestamps (i64 unix): 40 = end of the primary ("flash acquisition") window,
   48 = market end, 56 = expected resolution, 64 = created. Primary windows are short
   (hours to ~2 days); outside them buys fail with `FlashAcquisitionEnded` (6085).

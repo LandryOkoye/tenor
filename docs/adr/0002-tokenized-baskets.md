@@ -23,13 +23,16 @@ On-chain program `basket_vault` (Anchor, `onchain/programs/basket_vault`):
   depositor receives `supply × value_added / value_before` tokens (first deposit: 1 token per
   USDC of value). `min_tokens_out` is the on-chain slippage guard (Panta has none on chain).
 - **Claim**: permissionless crank, `claim_win_usdc` via CPI; winnings go to the vault only.
-- **Settle → redeem**: once all legs resolved and winners claimed, admin settles; holders burn
+- **Settle → redeem**: settling requires every leg's Panta `Event.resolved_at` (offset 72) to be
+  set. The admin may settle early (after claiming winners); otherwise **anyone** can call
+  `settle_after_grace` 72 h after the last leg resolved (the worker does it). Holders then burn
   tokens for a pro-rata share of the vault's USDC.
 
 ## Consequences / known limits (v1)
 
-- **Admin trust for `settle`**: settling before every winning leg is claimed would short early
-  redeemers. Next step: read Panta's resolution state on chain and make settle permissionless.
+- **Claim window**: settle needs no admin, but it trusts that winning legs get claimed within
+  the 72 h grace period (the worker cranks it; anyone can). The on-chain outcome field is not
+  mapped yet, so the program cannot itself prove every winner was claimed.
 - **Layout coupling**: we read `Event.yes_price` (offset 152) and `UserPosition` shares
   (offsets 74/90). Panta is upgradeable; checks on discriminators/owners make a layout change
   fail closed, but it would halt deposits until we update.
