@@ -43,6 +43,7 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "0006_tx_integrity",
         include_str!("../migrations/0006_tx_integrity.sql"),
     ),
+    ("0007_vault", include_str!("../migrations/0007_vault.sql")),
 ];
 
 /// Parse a `postgres://user:pass@host:port/db` URL and build a connection pool.

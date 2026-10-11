@@ -32,6 +32,9 @@ pub struct Config {
     /// Panta program ids allowed inside user transactions (safety allowlist).
     /// Required in production; in dev, mock instructions use the System program.
     pub panta_program_ids: Vec<String>,
+    /// basket_vault program id (tokenized baskets, ADR 0002). Optional: the
+    /// vault endpoints answer VAULT_DISABLED until it is set.
+    pub vault_program_id: Option<String>,
 
     // --- Auth / security ---
     pub jwt_secret: String,
@@ -87,6 +90,9 @@ impl Config {
             default_slippage_bps: optional("DEFAULT_SLIPPAGE_BPS", "150").parse()?,
             priority_fee_microlamports: optional("PRIORITY_FEE_MICROLAMPORTS", "5000").parse()?,
             panta_program_ids: list("PANTA_PROGRAM_IDS"),
+            vault_program_id: std::env::var("VAULT_PROGRAM_ID")
+                .ok()
+                .filter(|s| !s.is_empty()),
 
             jwt_secret: optional("JWT_SECRET", "dev-only-insecure-secret"),
             admin_wallets: list("ADMIN_WALLETS"),
