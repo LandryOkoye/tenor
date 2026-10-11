@@ -11,6 +11,7 @@ import { cn } from "@/lib/cn";
 import { formatPrice, formatUsdcCompact, toBaseUnits } from "@/lib/money";
 import { relative, secondsUntil } from "@/lib/time";
 import { useSession } from "@/wallet/session";
+import { AdminVaultButton } from "@/features/vault/AdminVaultButton";
 import { useTenorWallet } from "@/wallet/useTenorWallet";
 
 const MAX_LEGS = 4;
@@ -248,12 +249,16 @@ function Published({ onClose }: { onClose: (id: string) => void }) {
   return (
     <Card className="mt-6 p-5 sm:p-6">
       <h2 className="font-semibold">Published baskets</h2>
+      <p className="mt-1 text-sm text-muted">Tokenize mints an on-chain basket token (max 3 legs, your wallet pays vault rent). Close stops deposits; settle opens redemptions once every market resolves.</p>
       <ul className="mt-3 divide-y divide-line">
         {data.map((b) => (
-          <li key={b.id} className="flex flex-wrap items-center gap-3 py-3">
-            <span className="min-w-0 flex-1 font-medium">{b.title}</span>
+          <li key={b.id} className="flex flex-wrap items-center gap-2 py-3">
+            <span className="min-w-0 flex-1 basis-full font-medium sm:basis-auto">{b.title}</span>
             <span className="text-sm text-muted">{b.leg_count} legs</span>
             {b.status === "published" ? <Button size="sm" variant="secondary" onClick={() => onClose(b.id)}>Close</Button> : <Badge>{b.status}</Badge>}
+            {b.leg_count <= 3 && <AdminVaultButton label="Tokenize" build={() => api.adminTokenize(b.id)} />}
+            <AdminVaultButton label="Vault close" build={() => api.adminVaultClose(b.id)} />
+            <AdminVaultButton label="Vault settle" build={() => api.adminVaultSettle(b.id)} />
           </li>
         ))}
       </ul>

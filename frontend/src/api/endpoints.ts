@@ -48,10 +48,20 @@ export const api = {
   resolutionMarket: (id: string) => request<T.ResolutionMarketDetail>("GET", `/v1/resolution/markets/${enc(id)}`),
   creator: (creator: string) => request<T.CreatorDetail>("GET", `/v1/resolution/creators/${enc(creator)}`),
 
+  // tokenized baskets (vault, ADR 0002)
+  vaultBasket: (slug: string) => request<T.VaultBasketView>("GET", `/v1/vault/baskets/${enc(slug)}`),
+  vaultDeposit: (templateId: string, body: T.VaultDepositRequest) => request<T.VaultBuildResponse>("POST", `/v1/vault/baskets/${enc(templateId)}/deposit`, body),
+  vaultRedeem: (templateId: string, body: T.VaultRedeemRequest) => request<T.VaultBuildResponse>("POST", `/v1/vault/baskets/${enc(templateId)}/redeem`, body),
+  vaultSubmit: (txId: string, body: T.SubmitRequest) => request<T.VaultTxView>("POST", `/v1/vault/txs/${enc(txId)}/submit`, body),
+  vaultTx: (txId: string) => request<T.VaultTxView>("GET", `/v1/vault/txs/${enc(txId)}`),
+
   // admin
   adminMarkets: (q: string) => request<T.AdminPantaMarket[]>("GET", `/v1/admin/panta-markets${qs({ q })}`),
   adminCreate: (body: T.CreateBasketRequest) => request<T.AdminBasketView>("POST", "/v1/admin/baskets", body),
   adminUpdate: (id: string, body: T.UpdateBasketRequest) => request<T.AdminBasketView>("PATCH", `/v1/admin/baskets/${enc(id)}`, body),
   adminPublish: (id: string) => request<T.AdminBasketView>("POST", `/v1/admin/baskets/${enc(id)}/publish`),
   adminClose: (id: string) => request<T.AdminBasketView>("POST", `/v1/admin/baskets/${enc(id)}/close`),
+  adminTokenize: (id: string) => request<T.VaultBuildResponse>("POST", `/v1/admin/baskets/${enc(id)}/tokenize`),
+  adminVaultClose: (id: string) => request<T.VaultBuildResponse>("POST", `/v1/admin/baskets/${enc(id)}/vault-close`),
+  adminVaultSettle: (id: string) => request<T.VaultBuildResponse>("POST", `/v1/admin/baskets/${enc(id)}/vault-settle`),
 };

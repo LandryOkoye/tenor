@@ -3,7 +3,8 @@ import { Link, useParams } from "react-router";
 import { useMediaQuery } from "@/lib/useMediaQuery";
 import { MobileActionBar, scrollToPanel } from "@/features/trade/MobileActionBar";
 import { ArrowLeft, ArrowUpRight, Hourglass, Scales, TrendDown, WarningCircle } from "@phosphor-icons/react";
-import { useBasket } from "@/api/queries";
+import { useBasket, useVaultBasket } from "@/api/queries";
+import { VaultPanel } from "@/features/vault/VaultPanel";
 import { ApiError } from "@/api/client";
 import { Badge, Card, ErrorState, SideBadge, Skeleton, Stat } from "@/components/ui/primitives";
 import { formatPrice, formatUsdcCompact } from "@/lib/money";
@@ -18,6 +19,7 @@ export default function BasketDetailPage() {
   const { slug = "" } = useParams();
   const { data: b, isLoading, isError, error, refetch } = useBasket(slug);
   const desktop = useMediaQuery("(min-width: 1024px)");
+  const vault = useVaultBasket(slug);
   const panelRef = useRef<HTMLDivElement>(null);
 
   if (isError && error instanceof ApiError && error.status === 404) return <NotFound />;
@@ -68,8 +70,9 @@ export default function BasketDetailPage() {
           </Card>
 
           {!desktop && (
-            <div ref={panelRef} className="scroll-mt-24">
+            <div ref={panelRef} className="scroll-mt-24 space-y-4">
               <BasketBuyPanel basket={b} />
+              {vault.data && <VaultPanel basket={b} vault={vault.data} />}
             </div>
           )}
 
@@ -142,8 +145,9 @@ export default function BasketDetailPage() {
 
         {desktop && (
           <aside>
-            <div className="sticky top-24">
+            <div className="sticky top-24 space-y-4">
               <BasketBuyPanel basket={b} />
+              {vault.data && <VaultPanel basket={b} vault={vault.data} />}
             </div>
           </aside>
         )}

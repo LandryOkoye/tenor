@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Info, LockSimple, Timer } from "@phosphor-icons/react";
 import type { TxSummary } from "@/api/types";
 import { Dialog } from "@/components/ui/Dialog";
@@ -21,6 +21,7 @@ export function SignReview({
   signing,
   title = "Review and sign",
   error,
+  extra,
 }: {
   open: boolean;
   onClose: () => void;
@@ -31,6 +32,8 @@ export function SignReview({
   signing: boolean;
   title?: string;
   error?: string | null;
+  /** Extra disclosure rows (e.g. expected basket tokens) shown above the fees. */
+  extra?: ReactNode;
 }) {
   const left = useCountdown(expiresAt);
   const expired = left !== null && left <= 0;
@@ -46,6 +49,7 @@ export function SignReview({
               </li>
             ))}
           </ul>
+          {extra}
           <dl className="space-y-2 text-sm">
             <Row label="Tenor fee" value={formatUsdc(summary.our_fee_usdc)} />
             <Row label="Panta protocol fees (est.)" value={formatUsdc(summary.panta_fees_usdc)} />

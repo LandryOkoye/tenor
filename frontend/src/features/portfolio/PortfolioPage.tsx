@@ -12,6 +12,7 @@ import { formatDate } from "@/lib/time";
 import { useTenorWallet } from "@/wallet/useTenorWallet";
 import { useSession } from "@/wallet/session";
 import { ClaimButton } from "./ClaimButton";
+import { VaultHoldingRow } from "@/features/vault/VaultHoldingRow";
 
 type Tab = "baskets" | "positions" | "resolved" | "activity";
 
@@ -72,7 +73,7 @@ export default function PortfolioPage() {
           </p>
           <div className="mt-8 grid grid-cols-3 gap-4 border-t border-paper/10 pt-5 text-sm">
             <div><p className="text-paper/50">Cost basis</p><p className="mt-1 font-medium num">{formatUsdc(p.total_cost_basis_usdc)}</p></div>
-            <div><p className="text-paper/50">Baskets</p><p className="mt-1 font-medium num">{p.baskets.length}</p></div>
+            <div><p className="text-paper/50">Baskets</p><p className="mt-1 font-medium num">{p.baskets.length + p.vault_holdings.length}</p></div>
             <div><p className="text-paper/50">Positions</p><p className="mt-1 font-medium num">{open.length}</p></div>
           </div>
           <div className="pointer-events-none absolute -right-16 -top-16 size-56 rounded-full bg-accent/30 blur-3xl" aria-hidden="true" />
@@ -93,7 +94,7 @@ export default function PortfolioPage() {
         value={tab}
         onChange={(t) => setParams({ tab: t }, { replace: true })}
         items={[
-          { value: "baskets", label: <>Baskets <span className="hidden opacity-60 num sm:inline">{p.baskets.length}</span></> },
+          { value: "baskets", label: <>Baskets <span className="hidden opacity-60 num sm:inline">{p.baskets.length + p.vault_holdings.length}</span></> },
           { value: "positions", label: <>Positions <span className="hidden opacity-60 num sm:inline">{open.length}</span></> },
           { value: "resolved", label: <>Resolved <span className="hidden opacity-60 num sm:inline">{resolved.length}</span></> },
           { value: "activity", label: "Activity" },
@@ -102,10 +103,14 @@ export default function PortfolioPage() {
 
       <div className="mt-6" role="tabpanel">
         {tab === "baskets" &&
-          (p.baskets.length === 0 ? (
-            <EmptyState icon={<Basket size={24} />} title="No baskets yet" body="Buy a whole view in one signature." action={<ButtonLink to="/baskets">Explore baskets</ButtonLink>} />
+          (p.baskets.length + p.vault_holdings.length === 0 ? (
+            <EmptyState icon={<Basket size={24} />} title="No baskets yet" body="Back a whole theme in one signature." action={<ButtonLink to="/baskets">Explore baskets</ButtonLink>} />
           ) : (
-            <div className="space-y-4">{p.baskets.map((b) => <BasketRow key={b.purchase_id} b={b} />)}</div>
+            <div className="space-y-4">
+              {p.baskets.map((b) => <BasketRow key={b.purchase_id} b={b} />)}
+              {p.vault_holdings.map((h) => <VaultHoldingRow key={h.mint} h={h} />)}
+              {p.vault_holdings.some((h) => h.value_usdc == null) && <p className="text-xs text-muted">Basket tokens without a readable NAV aren't included in your portfolio total.</p>}
+            </div>
           ))}
         {tab === "positions" &&
           (open.length === 0 ? (

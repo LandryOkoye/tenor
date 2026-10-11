@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { api } from "./endpoints";
+import { ApiError } from "./client";
 import type { ResolutionStatus } from "./types";
 import { useSession } from "@/wallet/session";
 
@@ -46,6 +47,23 @@ export function usePortfolio() {
 export function useActivity() {
   const { session } = useSession();
   return useQuery({ queryKey: qk.activity(session?.wallet ?? null), queryFn: api.activity, enabled: !!session });
+}
+
+/** Tokenized version of a basket, if one exists. 404 / VAULT_DISABLED → null (not an error). */
+export function useVaultBasket(slug: string) {
+  return useQuery({
+    queryKey: ["vault", slug],
+    queryFn: async () => {
+      try {
+        return await api.vaultBasket(slug);
+      } catch (e) {
+        if (e instanceof ApiError && (e.status === 404 || e.code === "VAULT_DISABLED" || e.code === "NOT_FOUND")) return null;
+        throw e;
+      }
+    },
+    retry: false,
+    refetchInterval: 60_000,
+  });
 }
 
 export const useResolutionMarkets = (status: ResolutionStatus) =>
