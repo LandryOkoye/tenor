@@ -3,6 +3,32 @@
 Goal: a public **demo** that costs nothing on chain — the API serves mock Panta data with seeded
 baskets (no real money, no live key). Switching to real Panta later is only env vars.
 
+## Render (free, recommended for the hackathon)
+
+`render.yaml` at the repo root is a Blueprint: one free Docker web service (`tenor-api`) plus a
+free Postgres (`tenor-db`). Render's free tier has no background workers, so the API runs the
+jobs in-process (`RUN_JOBS=true`) and seeds the 3 demo baskets on start (idempotent).
+
+1. Push `main` to GitHub (`git push origin main`).
+2. dashboard.render.com → **New → Blueprint** → connect `LandryOkoye/tenor` → Apply.
+3. When prompted, set `FEE_WALLET_PUBKEY`, `ADMIN_WALLETS` (your wallet) and `CORS_ORIGINS`
+   (the frontend URL; add it later if the frontend is not deployed yet).
+4. Wait for the first build (Rust release build: ~10–15 min), then check
+   `https://tenor-api.onrender.com/readyz` (your URL may differ) and `/v1/baskets`.
+5. Keep it awake for judges: free services sleep after 15 min idle (~1 min cold start). Add a
+   free monitor at cron-job.org or UptimeRobot hitting `/healthz` every 10 min. One service
+   running all month fits Render's 750 free instance-hours.
+6. Give the frontend agent the API URL (`VITE_API_BASE_URL`).
+
+Free-tier limits to know: the free Postgres **expires after 30 days** (14-day grace to upgrade);
+no backups. Upgrading = $7/month web + paid Postgres, and the worker can then become its own
+service (start command `worker`, and remove `RUN_JOBS`).
+
+## Railway (alternative, ~$5 trial credit)
+
+Railway's $5 trial roughly covers this stack for about a month (≈0.3 GB RAM idle across api,
+worker and Postgres at ~$10/GB-month). Same image, two services:
+
 ```
 Railway project
 ├── Postgres            (Railway plugin → DATABASE_URL)
@@ -11,7 +37,7 @@ Railway project
 └── frontend            (handled by the frontend agent: Vercel/Netlify, VITE_API_BASE_URL = tenor-api URL)
 ```
 
-## Steps (Railway, ~10 minutes)
+### Railway steps
 
 1. Push `main` to GitHub (`git push origin main`).
 2. railway.com → **New Project → Deploy from GitHub repo** → `LandryOkoye/tenor`.

@@ -7,6 +7,8 @@
 
 FROM rust:1-bookworm AS build
 WORKDIR /app
+# Tolerate slow networks while fetching ~400 crates.
+ENV CARGO_NET_RETRY=10 CARGO_HTTP_TIMEOUT=120 CARGO_HTTP_MULTIPLEXING=false
 # Cache dependencies: build once with stub sources, then the real ones.
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir -p src/bin examples \

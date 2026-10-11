@@ -63,6 +63,12 @@ async fn main() -> anyhow::Result<()> {
         panta,
         solana,
     };
+    // Single-process hosting (e.g. Render's free tier has no background
+    // workers): RUN_JOBS=true runs the worker's jobs inside the API.
+    if std::env::var("RUN_JOBS").is_ok_and(|v| v.eq_ignore_ascii_case("true")) {
+        tracing::info!("RUN_JOBS=true: running background jobs in the api process");
+        tokio::spawn(backend::jobs::run(state.clone()));
+    }
     let app = routes::router(state).layer(cors_layer(&config));
 
     // 4. Serve.

@@ -1,0 +1,40 @@
+# Render Blueprint — free demo deployment (mock Panta, seeded baskets, $0).
+# Dashboard → New → Blueprint → pick this repo. See docs/deploy.md.
+services:
+  - type: web
+    name: tenor-api
+    runtime: docker
+    plan: free
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    # Free tier has no background workers: run the jobs in the API process,
+    # and seed the demo baskets (idempotent) on every start.
+    dockerCommand: sh -c "seed && exec api"
+    healthCheckPath: /healthz
+    envVars:
+      - key: APP_ENV
+        value: staging          # production refuses mock data on purpose
+      - key: PANTA_MOCK
+        value: "true"
+      - key: RUN_JOBS
+        value: "true"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tenor-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: FEE_WALLET_PUBKEY
+        sync: false             # set in the dashboard: a wallet pubkey you control
+      - key: ADMIN_WALLETS
+        sync: false             # your wallet pubkey
+      - key: CORS_ORIGINS
+        sync: false             # the frontend URL
+      - key: RUST_LOG
+        value: info
+
+databases:
+  - name: tenor-db
+    plan: free                  # expires after 30 days on Render's free tier
+    databaseName: tenor
+    user: tenor
