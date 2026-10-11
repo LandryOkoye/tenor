@@ -9,7 +9,7 @@ import { qk } from "@/api/queries";
 import { Button } from "@/components/ui/Button";
 import { PoweredByPanta, SideBadge } from "@/components/ui/primitives";
 import { cn } from "@/lib/cn";
-import { formatBps, formatPrice, formatShares, formatUsdc, fromBaseUnits, toBaseUnits } from "@/lib/money";
+import { formatBps, formatPrice, formatShares, formatUsdc, fromBaseUnits, sharesToNumber, toBaseUnits } from "@/lib/money";
 import { useSession } from "@/wallet/session";
 import { useTenorWallet } from "@/wallet/useTenorWallet";
 import { AmountInput } from "@/features/trade/AmountInput";
@@ -64,7 +64,7 @@ export function BasketBuyPanel({ basket }: { basket: BasketTemplateDetail }) {
         const b = await api.basketBuild(quote!.quote_id);
         return { id: b.purchase_id, transactions: b.transactions, summary: b.summary, expires_at: b.expires_at };
       } catch (e) {
-        if (e instanceof ApiError && (e.code === "QUOTE_STALE" || e.code === "SLIPPAGE_EXCEEDED") && !requoted) {
+        if (e instanceof ApiError && ["QUOTE_STALE", "QUOTE_EXPIRED", "SLIPPAGE_EXCEEDED"].includes(e.code) && !requoted) {
           await getQuote();
           setRequoted(true);
           throw new ApiError(e.code, "Prices moved, so we requoted the whole basket. Check the new totals and tap Buy again.", 409);
@@ -81,7 +81,7 @@ export function BasketBuyPanel({ basket }: { basket: BasketTemplateDetail }) {
     queryFn: () => api.purchase(purchaseId!),
     enabled: !!purchaseId,
     initialData: flow.result ?? undefined,
-    refetchInterval: (q) => (q.state.data && TERMINAL.includes(q.state.data.status) ? false : 1500),
+    refetchInterval: (q) => (q.state.data && TERMINAL.includes(q.state.data.status) ? false : 2500),
   });
   useEffect(() => {
     if (purchase.data && TERMINAL.includes(purchase.data.status)) {
@@ -151,7 +151,7 @@ export function BasketBuyPanel({ basket }: { basket: BasketTemplateDetail }) {
         <dl className="mt-4 rounded-2xl bg-sunk px-4 py-3">
           <QuoteRow label="Tenor fee" value={formatUsdc(quote.our_fee_usdc)} />
           <QuoteRow label="Panta fees (est.)" value={formatUsdc(quote.total_panta_fees_usdc)} />
-          <QuoteRow label="Max payout if every leg wins" value={`$${quote.legs.reduce((s, l) => s + Number(l.expected_shares), 0).toFixed(2)}`} />
+          <QuoteRow label="Max payout if every leg wins" value={`$${quote.legs.reduce((s, l) => s + sharesToNumber(l.expected_shares), 0).toFixed(2)}`} />
           <div className="mt-1 border-t border-line pt-1">
             <QuoteRow strong label="Total" value={formatUsdc(quote.amount_usdc)} />
           </div>

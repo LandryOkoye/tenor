@@ -54,12 +54,14 @@ export function formatPrice(price: string | null | undefined): { cents: string; 
   return { cents, pct: `${Math.round(c)}%`, value: v };
 }
 
-/** Shares are decimal strings from Panta (or base units, flagged by caller). */
-export function formatShares(shares: string | null | undefined): string {
-  if (!shares) return "–";
-  const n = Number(shares);
-  if (!Number.isFinite(n)) return shares;
-  return n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+/** Shares (and basket tokens) are integer strings with 6 decimals, like USDC. */
+export function sharesToNumber(base: string | null | undefined): number {
+  return fromBaseUnits(base);
+}
+
+export function formatShares(base: string | null | undefined): string {
+  if (!base) return "–";
+  return sharesToNumber(base).toLocaleString("en-US", { maximumFractionDigits: 2 });
 }
 
 export function formatBps(bps: number | null | undefined): string {

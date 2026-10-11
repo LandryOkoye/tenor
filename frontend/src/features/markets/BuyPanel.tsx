@@ -8,7 +8,7 @@ import { ApiError, friendlyError } from "@/api/client";
 import { Button, Spinner } from "@/components/ui/Button";
 import { PoweredByPanta } from "@/components/ui/primitives";
 import { cn } from "@/lib/cn";
-import { formatBps, formatPrice, formatShares, formatUsdc, toBaseUnits } from "@/lib/money";
+import { formatBps, formatPrice, formatShares, formatUsdc, sharesToNumber, toBaseUnits } from "@/lib/money";
 import { useSession } from "@/wallet/session";
 import { useTenorWallet } from "@/wallet/useTenorWallet";
 import { AmountInput } from "@/features/trade/AmountInput";
@@ -34,7 +34,8 @@ export function BuyPanel({ market, initialSide = "yes", requestedSide }: { marke
   }, [requestedSide]);
 
   const amountBase = toBaseUnits(amount);
-  const amountErr = amount && !amountBase ? "Enter a valid amount" : null;
+  const amountN = amountBase ? Number(amount) : 0;
+  const amountErr = !amount ? null : !amountBase ? "Enter a valid amount" : amountN < 0.01 || amountN > 1000 ? "Single buys are $0.01 to $1,000" : null;
 
   // Inputs changed → old quote no longer applies.
   useEffect(() => {
@@ -66,7 +67,7 @@ export function BuyPanel({ market, initialSide = "yes", requestedSide }: { marke
         return { id: b.order_id, transactions: b.transactions, summary: b.summary, expires_at: b.expires_at };
       } catch (e) {
         // QUOTE_STALE: requote once and let the user confirm the new numbers (brief §7.3).
-        if (e instanceof ApiError && e.code === "QUOTE_STALE" && !requoted) {
+        if (e instanceof ApiError && (e.code === "QUOTE_STALE" || e.code === "QUOTE_EXPIRED") && !requoted) {
           await getQuote();
           setRequoted(true);
           throw new ApiError("QUOTE_STALE", "Prices moved, so we refreshed your quote. Check the new numbers and tap Buy again.", 409);
@@ -83,7 +84,7 @@ export function BuyPanel({ market, initialSide = "yes", requestedSide }: { marke
     queryFn: () => api.order(orderId!),
     enabled: !!orderId,
     initialData: flow.result ?? undefined,
-    refetchInterval: (q) => (q.state.data && ["filled", "failed"].includes(q.state.data.status) ? false : 1500),
+    refetchInterval: (q) => (q.state.data && ["filled", "failed"].includes(q.state.data.status) ? false : 2500),
   });
   useEffect(() => {
     if (order.data?.status === "filled") qc.invalidateQueries({ queryKey: ["portfolio"] });
@@ -92,7 +93,7 @@ export function BuyPanel({ market, initialSide = "yes", requestedSide }: { marke
   const price = formatPrice(side === "yes" ? market.yes_price : market.no_price);
   const left = useCountdown(quote?.expires_at);
   const quoteExpired = left !== null && left <= 0;
-  const payout = quote ? Number(quote.expected_shares) : null;
+  const payout = quote ? sharesToNumber(quote.expected_shares) : null;
 
   if (flow.phase === "done" && order.data) {
     return <OrderResult order={order.data} onAgain={() => { flow.reset(); setQuote(null); }} />;
@@ -158,7 +159,7 @@ export function BuyPanel({ market, initialSide = "yes", requestedSide }: { marke
         {!wallet.address ? (
           <Button size="lg" className="w-full" onClick={wallet.openModal}>Connect wallet to trade</Button>
         ) : !quote || quoteExpired ? (
-          <Button size="lg" className="w-full" onClick={getQuote} loading={quoting} disabled={!amountBase || !tradable}>
+          <Button size="lg" className="w-full" onClick={getQuote} loading={quoting} disabled={!amountBase || !!amountErr || !tradable}>
             {quoteExpired ? "Refresh quote" : "Preview order"}
           </Button>
         ) : (

@@ -75,7 +75,29 @@ export function friendlyError(e: unknown): string {
   if (e instanceof ApiError) {
     switch (e.code) {
       case "QUOTE_STALE":
+      case "QUOTE_EXPIRED":
         return "Prices moved since your quote. Get a fresh quote to continue.";
+      case "TX_EXPIRED":
+        return "The transaction expired before it landed, so nothing was bought. Get a fresh quote and try again.";
+      case "TX_VALIDATION_FAILED":
+        return "The signed transaction didn't match what Tenor built, so we didn't send it. Please try again.";
+      case "DUPLICATE_TX":
+      case "ALREADY_SUBMITTED":
+        return "This transaction was already submitted. Check your portfolio for its status.";
+      case "RATE_LIMITED":
+        return "Too many requests. Wait a few seconds and try again.";
+      case "PANTA_UNAVAILABLE":
+        return "Panta, our market data and settlement provider, isn't responding. Try again shortly.";
+      case "AMOUNT_OUT_OF_RANGE":
+        return "That amount is outside the allowed range for this trade.";
+      case "INVALID_SLIPPAGE":
+        return "Slippage must be between 0.01% and 10%.";
+      case "VAULT_NOT_LIVE":
+        return "This basket token isn't open for deposits right now.";
+      case "VAULT_NOT_SETTLED":
+        return "Basket tokens can be redeemed once every market in the basket has resolved.";
+      case "VAULT_DISABLED":
+        return "Tokenized baskets aren't available right now.";
       case "SLIPPAGE_EXCEEDED":
         return "Prices moved more than your slippage tolerance. Requote to see the new total.";
       case "LEG_NOT_TRADABLE":
