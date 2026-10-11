@@ -131,6 +131,8 @@ pub enum SigStatus {
 /// Everything the transaction layer needs, built once at startup.
 pub struct SolanaCtx {
     rpc: RpcClient,
+    /// Same endpoint as `rpc`, for raw JSON-RPC calls the client lacks.
+    rpc_url: String,
     /// USDC mint (mainnet USDC by default; overridable via USDC_MINT).
     usdc_mint: Pubkey,
     /// Fee wallet that receives our fee (its ATA is created ahead of launch).
@@ -163,7 +165,12 @@ impl SolanaCtx {
         };
 
         let mut panta_programs = Vec::new();
-        for id in &config.panta_program_ids {
+        // Our own basket_vault program is allowed at the top level too.
+        for id in config
+            .panta_program_ids
+            .iter()
+            .chain(&config.vault_program_id)
+        {
             panta_programs.push(
                 Pubkey::from_str(id)
                     .map_err(|e| anyhow::anyhow!("PANTA_PROGRAM_IDS entry {id:?} invalid: {e}"))?,
@@ -172,6 +179,7 @@ impl SolanaCtx {
 
         Ok(Self {
             rpc: RpcClient::new(config.solana_rpc_url.clone()),
+            rpc_url: config.solana_rpc_url.clone(),
             usdc_mint,
             fee_wallet,
             panta_programs,
@@ -546,6 +554,88 @@ impl SolanaCtx {
         Ok(())
     }
 
+    /// Simulate and return the post-transaction token `amount` of one SPL
+    /// token account (e.g. the basket tokens a deposit would mint).
+    pub async fn simulate_token_balance(
+        &self,
+        tx: &VersionedTransaction,
+        token_account: &Pubkey,
+    ) -> Result<u64, TxError> {
+        use solana_client::rpc_config::{
+            RpcSimulateTransactionAccountsConfig, RpcSimulateTransactionConfig,
+        };
+        let result = self
+            .rpc
+            .simulate_transaction_with_config(
+                tx,
+                RpcSimulateTransactionConfig {
+                    sig_verify: false,
+                    replace_recent_blockhash: true,
+                    accounts: Some(RpcSimulateTransactionAccountsConfig {
+                        encoding: None, // base64
+                        addresses: vec![token_account.to_string()],
+                    }),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| TxError::Rpc(format!("simulation call failed: {e}")))?
+            .value;
+        if let Some(err) = result.err {
+            return Err(TxError::Simulation(format!(
+                "{err}; logs: {:?}",
+                result.logs.unwrap_or_default()
+            )));
+        }
+        let data = result
+            .accounts
+            .and_then(|a| a.into_iter().next().flatten())
+            .and_then(|acc| acc.data.decode())
+            .ok_or_else(|| TxError::Simulation("simulated account missing".into()))?;
+        // SPL token account: amount is the u64 at offset 64.
+        data.get(64..72)
+            .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
+            .ok_or_else(|| TxError::Simulation("not a token account".into()))
+    }
+
+    /// Raw JSON-RPC call on our endpoint (for methods we decode by hand).
+    pub async fn rpc_json(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, TxError> {
+        let body =
+            serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
+        let resp: serde_json::Value = reqwest::Client::new()
+            .post(&self.rpc_url)
+            .json(&body)
+            .timeout(Duration::from_secs(20))
+            .send()
+            .await
+            .map_err(|e| TxError::Rpc(format!("{method}: {e}")))?
+            .json()
+            .await
+            .map_err(|e| TxError::Rpc(format!("{method}: {e}")))?;
+        if let Some(err) = resp.get("error") {
+            return Err(TxError::Rpc(format!("{method}: {err}")));
+        }
+        Ok(resp["result"].clone())
+    }
+
+    /// Raw account data for several accounts (None where missing).
+    pub async fn accounts_data(&self, keys: &[Pubkey]) -> Result<Vec<Option<Vec<u8>>>, TxError> {
+        let accounts = self
+            .rpc
+            .get_multiple_accounts(keys)
+            .await
+            .map_err(|e| TxError::Rpc(format!("get accounts failed: {e}")))?;
+        Ok(accounts.into_iter().map(|a| a.map(|a| a.data)).collect())
+    }
+
+    pub fn is_mock(&self) -> bool {
+        self.mock
+    }
+
     /// The signature a signed transaction will land under (its first
     /// signature, i.e. the fee payer's). Known BEFORE broadcasting, so we can
     /// persist it first and never lose track of a transaction.
@@ -726,6 +816,7 @@ mod tests {
     fn ctx() -> SolanaCtx {
         SolanaCtx {
             rpc: RpcClient::new("http://localhost:8899".to_string()),
+            rpc_url: "http://localhost:8899".to_string(),
             usdc_mint: Pubkey::from_str("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v").unwrap(),
             fee_wallet: Pubkey::from_str("1FeeWa11et111111111111111111111111111111111").unwrap(),
             panta_programs: vec![
@@ -1116,6 +1207,7 @@ mod tests {
             cors_origins: vec![],
             api_bind: "0.0.0.0:8080".into(),
             panta_program_ids: vec![],
+            vault_program_id: None,
             priority_fee_microlamports: 5000,
         }
     }
