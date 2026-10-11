@@ -119,6 +119,13 @@ Basket-eligible markets must be in `primary` (checked at quote time by Panta too
   top → fee account); shares are recorded in the buyer's `UserPosition` and logged as
   `Primary Order (USDC): side=…, amount=…, yes_price=…, no_price=…, minted=…` (prices 1e9-scaled).
 - Panta's build adds an `spl-memo` instruction to purchases.
+- `Event` timestamps (i64 unix): 40 = end of the primary ("flash acquisition") window,
+  48 = market end, 56 = expected resolution, 64 = created. Primary windows are short
+  (hours to ~2 days); outside them buys fail with `FlashAcquisitionEnded` (6085).
+- `claim_win_usdc`: data = disc `2ba06a33a74c141f` + claimer pubkey. Accounts: claimer
+  (signer, w), MarketConfig, Event, market vault authority, market vault (w),
+  `UserPosition`, `WinClaim` PDA `["win_claim", event, claimer]` (w, created), claimer's
+  USDC ATA (w), USDC mint, Token, ATA, System.
 
 ### Spike: program-owned buyer (tokenized baskets) — PASSED
 
