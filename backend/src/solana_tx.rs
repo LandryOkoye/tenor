@@ -52,6 +52,8 @@ pub const TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 pub const ATA_PROGRAM: &str = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 /// ComputeBudget program (CU limit + priority fee instructions).
 pub const COMPUTE_BUDGET_PROGRAM: &str = "ComputeBudget111111111111111111111111111111";
+/// SPL Memo v2. Panta's purchase builds append a memo; memos cannot move funds.
+pub const MEMO_PROGRAM: &str = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
 /// System program (mock instructions in dev mode; never expected in real buys).
 pub const SYSTEM_PROGRAM: &str = "11111111111111111111111111111111";
 
@@ -382,7 +384,13 @@ impl SolanaCtx {
         // The System program is only ever used by mock instructions; a real
         // purchase never needs a top-level System instruction, and allowing
         // one would let a SOL transfer to anyone through.
-        let mut allowlist = vec![token_program, ata_program, compute_budget_program];
+        let memo_program = Pubkey::from_str(MEMO_PROGRAM).unwrap();
+        let mut allowlist = vec![
+            token_program,
+            ata_program,
+            compute_budget_program,
+            memo_program,
+        ];
         if self.mock {
             allowlist.push(system_program);
         }
