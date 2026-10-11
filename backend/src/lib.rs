@@ -25,3 +25,4 @@ pub mod routes;
 pub mod settlement;
 pub mod solana_tx;
 pub mod state;
+pub mod vault;
