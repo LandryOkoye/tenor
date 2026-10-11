@@ -225,10 +225,21 @@ pub async fn portfolio(
         });
     }
 
+    // Tokenized baskets: valued on chain; counted in totals when readable.
+    drop(client);
+    let vault_holdings = crate::routes::vault::holdings(&state, user.user_id, &user.wallet).await?;
+    for h in &vault_holdings {
+        if let Some(v) = h.value_usdc.as_deref().and_then(|v| v.parse::<i64>().ok()) {
+            total_value += v;
+            total_cost += h.cost_basis_usdc.parse::<i64>().unwrap_or(0);
+        }
+    }
+
     Ok(Json(Portfolio {
         wallet: user.wallet,
         single_positions,
         baskets,
+        vault_holdings,
         total_value_usdc: total_value.to_string(),
         total_cost_basis_usdc: total_cost.to_string(),
         total_unrealized_pnl_usdc: (total_value - total_cost).to_string(),

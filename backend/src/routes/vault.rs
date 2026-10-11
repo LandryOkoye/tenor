@@ -592,3 +592,53 @@ async fn tx_view(
         created_at: t.created_at,
     }))
 }
+
+/// Portfolio section for tokenized baskets (best effort: chain reads that
+/// fail leave `value_usdc` empty instead of failing the whole portfolio).
+pub async fn holdings(
+    state: &AppState,
+    user_id: Uuid,
+    wallet: &str,
+) -> Result<Vec<crate::domain::PortfolioVaultHolding>, AppError> {
+    let client = state.db.get().await?;
+    let rows = queries::vault::user_deposits(&client, user_id).await?;
+    drop(client);
+    let Ok(c) = ctx(state) else {
+        return Ok(Vec::new());
+    };
+    let user = parse_pk(wallet)?;
+    let mut out = Vec::with_capacity(rows.len());
+    for (row, deposited) in rows {
+        let a = addresses_of(&c, &row);
+        let balance = state
+            .solana
+            .accounts_data(&[vault::ata(&user, &a.mint)])
+            .await
+            .ok()
+            .and_then(|mut d| d.remove(0))
+            .and_then(|d| {
+                d.get(64..72)
+                    .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
+            })
+            .unwrap_or(0);
+        let value = match legs_of(&row) {
+            Ok(legs) => vault::read_nav(&state.solana, &a, &legs)
+                .await
+                .ok()
+                .filter(|(_, supply)| *supply > 0)
+                .map(|(nav, supply)| (balance as u128 * nav as u128 / supply as u128) as u64),
+            Err(_) => None,
+        };
+        out.push(crate::domain::PortfolioVaultHolding {
+            template_id: row.template_id,
+            template_slug: row.slug,
+            template_title: row.title,
+            status: row.status,
+            mint: row.mint,
+            tokens: balance.to_string(),
+            value_usdc: value.map(|v| v.to_string()),
+            cost_basis_usdc: deposited.to_string(),
+        });
+    }
+    Ok(out)
+}

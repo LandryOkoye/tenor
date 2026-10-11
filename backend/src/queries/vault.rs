@@ -193,3 +193,38 @@ pub async fn transition_tx(
         .await?;
     Ok(n == 1)
 }
+
+/// Vault baskets a user deposited into, with their confirmed deposit total.
+pub async fn user_deposits(
+    client: &Client,
+    user_id: Uuid,
+) -> Result<Vec<(VaultBasketRow, i64)>, tokio_postgres::Error> {
+    let sql = format!(
+        "{SELECT_BASKET},
+         LATERAL (SELECT sum(x.amount_usdc)::BIGINT AS deposited FROM vault_txs x
+                  WHERE x.template_id = v.template_id AND x.user_id = $1
+                    AND x.kind = 'deposit' AND x.status = 'confirmed') d
+         WHERE d.deposited IS NOT NULL"
+    );
+    let sql = sql.replace("SELECT v.template_id", "SELECT d.deposited, v.template_id");
+    Ok(client
+        .query(&sql, &[&user_id])
+        .await?
+        .iter()
+        .map(|r| {
+            let deposited: i64 = r.get(0);
+            let row = VaultBasketRow {
+                template_id: r.get(1),
+                onchain_id: r.get(2),
+                mint: r.get(3),
+                vault_pda: r.get(4),
+                panta_fee_usdc: r.get(5),
+                legs_json: r.get(6),
+                status: r.get(7),
+                slug: r.get(8),
+                title: r.get(9),
+            };
+            (row, deposited)
+        })
+        .collect())
+}

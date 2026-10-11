@@ -63,9 +63,30 @@ pub struct Portfolio {
     pub wallet: String,
     pub single_positions: Vec<PortfolioPosition>,
     pub baskets: Vec<PortfolioBasket>,
+    /// Tokenized baskets (basket tokens held in the wallet). Not included in
+    /// the totals below while their value cannot be read (`value_usdc` null).
+    pub vault_holdings: Vec<PortfolioVaultHolding>,
     pub total_value_usdc: String,
     pub total_cost_basis_usdc: String,
     pub total_unrealized_pnl_usdc: String,
+}
+
+/// Basket tokens of one tokenized basket held by the wallet.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PortfolioVaultHolding {
+    pub template_id: Uuid,
+    pub template_slug: String,
+    pub template_title: String,
+    /// Vault status: live | closed | settled.
+    pub status: String,
+    pub mint: String,
+    /// Basket tokens in the wallet (base units, 6 decimals).
+    pub tokens: String,
+    /// tokens × NAV per token, read on chain (null if the chain was unreachable).
+    pub value_usdc: Option<String>,
+    /// Sum of the user's confirmed deposits (incl. Tenor's fee).
+    pub cost_basis_usdc: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
