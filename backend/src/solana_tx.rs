@@ -1208,6 +1208,7 @@ mod tests {
             api_bind: "0.0.0.0:8080".into(),
             panta_program_ids: vec![],
             vault_program_id: None,
+            crank_keypair: None,
             priority_fee_microlamports: 5000,
         }
     }

@@ -437,6 +437,7 @@ mod tests {
             priority_fee_microlamports: 5000,
             panta_program_ids: vec![],
             vault_program_id: None,
+            crank_keypair: None,
             jwt_secret: "test".into(),
             admin_wallets: vec![],
             blocked_countries: vec![],

@@ -35,6 +35,9 @@ pub struct Config {
     /// basket_vault program id (tokenized baskets, ADR 0002). Optional: the
     /// vault endpoints answer VAULT_DISABLED until it is set.
     pub vault_program_id: Option<String>,
+    /// Keypair file the worker uses as fee payer to claim winning vault legs
+    /// (it never receives funds). Unset = the claim crank is off.
+    pub crank_keypair: Option<String>,
 
     // --- Auth / security ---
     pub jwt_secret: String,
@@ -91,6 +94,9 @@ impl Config {
             priority_fee_microlamports: optional("PRIORITY_FEE_MICROLAMPORTS", "5000").parse()?,
             panta_program_ids: list("PANTA_PROGRAM_IDS"),
             vault_program_id: std::env::var("VAULT_PROGRAM_ID")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            crank_keypair: std::env::var("CRANK_KEYPAIR")
                 .ok()
                 .filter(|s| !s.is_empty()),
 

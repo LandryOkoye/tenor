@@ -216,6 +216,47 @@ pub fn redeem_ix(
     })
 }
 
+/// The vault's Panta `WinClaim` receipt: `["win_claim", event, vault]`.
+pub fn win_claim(event: &Pubkey, owner: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(
+        &[b"win_claim", event.as_ref(), owner.as_ref()],
+        &Pubkey::from_str(PANTA_PROGRAM).unwrap(),
+    )
+    .0
+}
+
+/// `claim_leg(leg_index)`: anyone may crank it; winnings go to the vault only.
+pub fn claim_leg_ix(
+    a: &VaultAddresses,
+    leg_index: u8,
+    leg: &VaultLeg,
+    usdc: &Pubkey,
+) -> Result<Instruction, TxError> {
+    let mut data = disc("claim_leg");
+    data.push(leg_index);
+    let event = pk(&leg.event)?;
+    Ok(Instruction {
+        program_id: a.program,
+        accounts: vec![
+            AccountMeta::new_readonly(a.basket, false),
+            AccountMeta::new(a.vault, false),
+            AccountMeta::new(a.vault_usdc, false),
+            AccountMeta::new_readonly(*usdc, false),
+            AccountMeta::new_readonly(panta_config(), false),
+            AccountMeta::new_readonly(pk(PANTA_PROGRAM)?, false),
+            AccountMeta::new_readonly(pk(TOKEN_PROGRAM)?, false),
+            AccountMeta::new_readonly(pk(ATA_PROGRAM)?, false),
+            AccountMeta::new_readonly(pk(SYSTEM_PROGRAM)?, false),
+            AccountMeta::new_readonly(event, false),
+            AccountMeta::new_readonly(pk(&leg.authority)?, false),
+            AccountMeta::new(pk(&leg.market_vault)?, false),
+            AccountMeta::new_readonly(position(&event, &a.vault), false),
+            AccountMeta::new(win_claim(&event, &a.vault), false),
+        ],
+        data,
+    })
+}
+
 /// Admin-only lifecycle instruction: `close_deposits` or `settle`.
 pub fn admin_ix(name: &str, a: &VaultAddresses, admin: &Pubkey) -> Instruction {
     Instruction {

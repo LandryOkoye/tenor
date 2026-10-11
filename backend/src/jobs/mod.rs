@@ -11,12 +11,14 @@
 //! | basket_guard    | 5 min   | Close templates with non-tradable legs      |
 //! | resolution_watch| 5 min   | Settle legs + purchases on resolved markets |
 //! | tx_confirm      | 15 s    | Settle submitted txs (confirm/fail/expire)  |
+//! | vault_crank     | 5 min   | Claim winning legs into basket vaults       |
 
 pub mod basket_guard;
 pub mod market_sync;
 pub mod price_snapshot;
 pub mod resolution_watch;
 pub mod tx_confirm;
+pub mod vault_crank;
 
 use std::time::Duration;
 
@@ -49,7 +51,8 @@ pub async fn run(state: AppState) {
         resolution_watch::run_once,
         "resolution_watch",
     ));
-    let confirm = tokio::spawn(tick(state, 15, tx_confirm::run_once, "tx_confirm"));
+    let confirm = tokio::spawn(tick(state.clone(), 15, tx_confirm::run_once, "tx_confirm"));
+    let crank = tokio::spawn(tick(state, 5 * 60, vault_crank::run_once, "vault_crank"));
 
     // If any job loop dies (e.g. a panic inside a job), report it.
     for (name, handle) in [
@@ -58,6 +61,7 @@ pub async fn run(state: AppState) {
         ("basket_guard", guard),
         ("resolution_watch", watch),
         ("tx_confirm", confirm),
+        ("vault_crank", crank),
     ] {
         if let Err(e) = handle.await {
             tracing::error!(job = name, error = ?e, "job loop terminated");
