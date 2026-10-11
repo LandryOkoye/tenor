@@ -1,5 +1,5 @@
 //! Resolution Center queries (brief §8). Everything computed here is
-//! "APP analysis" — derived from our own snapshots and recorded events,
+//! "Tenor analysis" — derived from our own snapshots and recorded events,
 //! clearly separable from Panta's official data.
 
 use chrono::{DateTime, Utc};

@@ -61,7 +61,7 @@ pub struct Ready {
     pub panta: Option<bool>,
 }
 
-/// Where a piece of returned data came from (brief §8: label APP analysis).
+/// Where a piece of returned data came from (brief §8: label Tenor analysis).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]

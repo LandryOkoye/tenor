@@ -1,7 +1,7 @@
 //! Resolution Center endpoints (brief §8, Phase 2 v1 per the build plan).
 //!
 //! Shows how every market resolves: rules, oracle, evidence timeline, and
-//! creator track records. Everything we compute is labelled "APP analysis";
+//! creator track records. Everything we compute is labelled "Tenor analysis";
 //! everything from Panta's catalog is labelled "panta" — never mixed.
 
 use axum::{

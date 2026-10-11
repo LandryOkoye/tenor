@@ -6,7 +6,7 @@
 //!   - WHAT it's worth comes from our cached market prices
 //!
 //! If the wallet's shares no longer match what we recorded, the basket is
-//! flagged "modified outside APP" (brief §7.6).
+//! flagged "modified outside Tenor" (brief §7.6).
 
 use axum::{extract::State, Json};
 use std::collections::HashMap;

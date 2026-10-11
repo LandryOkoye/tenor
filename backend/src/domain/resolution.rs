@@ -45,7 +45,7 @@ pub struct TimelineEvent {
     pub source: DataSource,
 }
 
-/// Creator / oracle track record (brief §8). Every field is APP analysis.
+/// Creator / oracle track record (brief §8). Every field is Tenor analysis.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct CreatorScorecard {

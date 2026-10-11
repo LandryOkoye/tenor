@@ -39,7 +39,7 @@ pub struct PortfolioBasket {
     pub legs_total: i32,
     pub legs: Vec<PortfolioBasketLeg>,
     /// True if the wallet's on-chain shares no longer match our records —
-    /// the user moved/altered positions outside the app ("basket modified outside APP").
+    /// the user moved/altered positions outside the app ("basket modified outside Tenor").
     pub modified_outside: bool,
 }
 

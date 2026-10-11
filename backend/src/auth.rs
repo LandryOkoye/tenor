@@ -30,7 +30,7 @@ const SESSION_TTL_HOURS: i64 = 24;
 /// never be replayed from another session.
 pub fn sign_in_message(wallet: &str, nonce: &str) -> String {
     format!(
-        "APP wants you to sign in with your Solana account:\n{wallet}\n\n\
+        "Tenor wants you to sign in with your Solana account:\n{wallet}\n\n\
          This request will not trigger any transaction or cost any fees.\n\n\
          Nonce: {nonce}"
     )
