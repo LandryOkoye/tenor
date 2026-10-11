@@ -98,6 +98,17 @@ pub async fn record_submission(
                 )
                 .await?
             }
+            "vault" => {
+                queries::vault::transition_tx(
+                    client,
+                    ref_id,
+                    "built",
+                    "submitted",
+                    Some(signature),
+                    None,
+                )
+                .await?
+            }
             other => return Err(AppError::internal(format!("unknown tx kind {other}"))),
         };
         if !moved {
@@ -257,6 +268,32 @@ pub async fn finalize(state: &AppState, signature: &str) -> anyhow::Result<()> {
             )
             .await?;
         }
+        "vault" => {
+            let vtx = queries::vault::get_tx(&client, ref_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("vault tx {ref_id} missing"))?;
+            let moved = queries::vault::transition_tx(
+                &client,
+                ref_id,
+                "submitted",
+                "confirmed",
+                None,
+                None,
+            )
+            .await?;
+            if moved {
+                // Lifecycle txs move the basket's status.
+                let status = match vtx.kind.as_str() {
+                    "create" => Some("live"),
+                    "close" => Some("closed"),
+                    "settle" => Some("settled"),
+                    _ => None,
+                };
+                if let Some(status) = status {
+                    queries::vault::set_basket_status(&client, vtx.template_id, status).await?;
+                }
+            }
+        }
         other => anyhow::bail!("unknown transaction kind {other}"),
     }
 
@@ -287,6 +324,17 @@ pub async fn fail(
             }
             "claim" => {
                 queries::portfolio::transition_claim_batch(
+                    &client,
+                    ref_id,
+                    "submitted",
+                    "failed",
+                    None,
+                    Some(code),
+                )
+                .await?;
+            }
+            "vault" => {
+                queries::vault::transition_tx(
                     &client,
                     ref_id,
                     "submitted",

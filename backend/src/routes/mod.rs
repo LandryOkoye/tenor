@@ -11,6 +11,7 @@ pub mod markets;
 pub mod orders;
 pub mod portfolio;
 pub mod resolution;
+pub mod vault;
 
 use axum::routing::{get, post};
 use axum::Router;
@@ -60,7 +61,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/claims/build", post(claims::build))
         .route("/v1/claims/submit", post(claims::submit));
 
-    // Resolution Center (public reads; APP analysis clearly labelled).
+    // Resolution Center (public reads; Tenor analysis clearly labelled).
     let resolution_routes = Router::new()
         .route("/v1/resolution/markets", get(resolution::markets))
         .route("/v1/resolution/markets/{id}", get(resolution::detail))
@@ -78,7 +79,18 @@ pub fn router(state: AppState) -> Router {
             axum::routing::patch(admin::update),
         )
         .route("/v1/admin/baskets/{id}/publish", post(admin::publish))
-        .route("/v1/admin/baskets/{id}/close", post(admin::close));
+        .route("/v1/admin/baskets/{id}/close", post(admin::close))
+        .route("/v1/admin/baskets/{id}/tokenize", post(vault::tokenize))
+        .route("/v1/admin/baskets/{id}/vault-close", post(vault::close))
+        .route("/v1/admin/baskets/{id}/vault-settle", post(vault::settle));
+
+    // Tokenized baskets (on-chain basket_vault, ADR 0002).
+    let vault_routes = Router::new()
+        .route("/v1/vault/baskets/{slug}", get(vault::basket))
+        .route("/v1/vault/baskets/{id}/deposit", post(vault::deposit))
+        .route("/v1/vault/baskets/{id}/redeem", post(vault::redeem))
+        .route("/v1/vault/txs/{id}/submit", post(vault::submit))
+        .route("/v1/vault/txs/{id}", get(vault::tx_status));
 
     health_routes
         .merge(auth_routes)
@@ -88,5 +100,6 @@ pub fn router(state: AppState) -> Router {
         .merge(portfolio_routes)
         .merge(resolution_routes)
         .merge(admin_routes)
+        .merge(vault_routes)
         .with_state(state)
 }
