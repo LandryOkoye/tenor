@@ -17,6 +17,7 @@ pub mod market;
 pub mod order;
 pub mod portfolio;
 pub mod resolution;
+pub mod vault;
 
 pub use admin::*;
 pub use auth::*;
@@ -26,3 +27,4 @@ pub use market::*;
 pub use order::*;
 pub use portfolio::*;
 pub use resolution::*;
+pub use vault::*;

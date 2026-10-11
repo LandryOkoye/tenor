@@ -10,3 +10,4 @@ pub mod orders;
 pub mod portfolio;
 pub mod resolution;
 pub mod users;
+pub mod vault;
