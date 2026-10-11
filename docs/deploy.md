@@ -7,7 +7,8 @@ baskets (no real money, no live key). Switching to real Panta later is only env 
 
 `render.yaml` at the repo root is a Blueprint: one free Docker web service (`tenor-api`) plus a
 free Postgres (`tenor-db`). Render's free tier has no background workers, so the API runs the
-jobs in-process (`RUN_JOBS=true`) and seeds the 3 demo baskets on start (idempotent).
+jobs in-process (`RUN_JOBS=true`) and seeds the 3 demo baskets on start (`SEED_ON_START=true`,
+idempotent; see `backend/start.sh`).
 
 1. Push `main` to GitHub (`git push origin main`).
 2. dashboard.render.com → **New → Blueprint** → connect `LandryOkoye/tenor` → Apply.
@@ -22,7 +23,7 @@ jobs in-process (`RUN_JOBS=true`) and seeds the 3 demo baskets on start (idempot
 
 Free-tier limits to know: the free Postgres **expires after 30 days** (14-day grace to upgrade);
 no backups. Upgrading = $7/month web + paid Postgres, and the worker can then become its own
-service (start command `worker`, and remove `RUN_JOBS`).
+service (start command `start worker`, and remove `RUN_JOBS`).
 
 ## Railway (alternative, ~$5 trial credit)
 
@@ -33,7 +34,7 @@ worker and Postgres at ~$10/GB-month). Same image, two services:
 Railway project
 ├── Postgres            (Railway plugin → DATABASE_URL)
 ├── tenor-api           (backend/Dockerfile, start: api)        ← public URL
-├── tenor-worker        (backend/Dockerfile, start: sh -c "seed && exec worker")
+├── tenor-worker        (backend/Dockerfile, start: start worker, SEED_ON_START=true)
 └── frontend            (handled by the frontend agent: Vercel/Netlify, VITE_API_BASE_URL = tenor-api URL)
 ```
 
@@ -48,7 +49,7 @@ Railway project
    - Variables: the "shared" block below.
 5. **New → GitHub repo** again (same repo) for **tenor-worker**:
    - Root Directory `backend`; Settings → Deploy → **Custom Start Command**:
-     `sh -c "seed && exec worker"` (seeds the demo baskets once, then runs the jobs).
+     `start worker`, plus variable `SEED_ON_START=true` (seeds the demo baskets, then runs the jobs).
    - Variables: same shared block.
 6. Check `https://<api-domain>/readyz` → `{"db":true,...}` and `/v1/baskets` lists 3 baskets.
 7. Give the frontend agent the API URL; set `CORS_ORIGINS` on both services to the frontend URL.
@@ -81,7 +82,7 @@ VAULT_PROGRAM_ID=AGrL8gCofvFTvsLDXmwThAWd1Wdz9ULPYwHWCzVDnF7u   # only once depl
 CRANK_KEYPAIR=/secrets/crank.json                              # worker only
 ```
 
-Change the worker start command back to `worker` (the seed is mock-only).
+Remove `SEED_ON_START` (the seed is mock-only).
 
 ## Other hosts
 

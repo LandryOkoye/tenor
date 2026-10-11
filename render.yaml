@@ -7,9 +7,9 @@ services:
     plan: free
     rootDir: backend
     dockerfilePath: ./Dockerfile
-    # Free tier has no background workers: run the jobs in the API process,
-    # and seed the demo baskets (idempotent) on every start.
-    dockerCommand: sh -c "seed && exec api"
+    # Uses the image's default start (backend/start.sh): seeds the demo
+    # baskets when SEED_ON_START=true, then runs the API. The free tier has
+    # no background workers, so RUN_JOBS=true runs the jobs inside the API.
     healthCheckPath: /healthz
     envVars:
       - key: APP_ENV
@@ -17,6 +17,8 @@ services:
       - key: PANTA_MOCK
         value: "true"
       - key: RUN_JOBS
+        value: "true"
+      - key: SEED_ON_START
         value: "true"
       - key: DATABASE_URL
         fromDatabase:

@@ -24,9 +24,10 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/* && useradd -r -u 10001 tenor
 COPY --from=build /app/target/release/api /app/target/release/worker /app/target/release/seed /usr/local/bin/
+COPY --chmod=755 start.sh /usr/local/bin/start
 USER tenor
 ENV APP_ENV=production RUST_LOG=info
 EXPOSE 8080
-# Default: the API. Hosts override the start command per service:
-#   worker service: `worker`   (demo: `sh -c "seed && exec worker"`)
-CMD ["api"]
+# Default: the API (seeding first when SEED_ON_START=true). Hosts override
+# the start command per service only to run the worker: `start worker`.
+CMD ["start", "api"]
