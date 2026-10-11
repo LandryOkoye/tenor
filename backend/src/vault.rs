@@ -257,17 +257,73 @@ pub fn claim_leg_ix(
     })
 }
 
-/// Admin-only lifecycle instruction: `close_deposits` or `settle`.
-pub fn admin_ix(name: &str, a: &VaultAddresses, admin: &Pubkey) -> Instruction {
-    Instruction {
-        program_id: a.program,
-        accounts: vec![
-            AccountMeta::new_readonly(*admin, true),
-            AccountMeta::new(a.basket, false),
-        ],
-        data: disc(name),
+/// Admin-only lifecycle instruction: `close_deposits` or `settle`
+/// (`settle` also takes every leg's Event to prove all markets resolved).
+pub fn admin_ix(
+    name: &str,
+    a: &VaultAddresses,
+    admin: &Pubkey,
+    legs: &[VaultLeg],
+) -> Result<Instruction, TxError> {
+    let mut accounts = vec![
+        AccountMeta::new_readonly(*admin, true),
+        AccountMeta::new(a.basket, false),
+    ];
+    if name == "settle" {
+        for leg in legs {
+            accounts.push(AccountMeta::new_readonly(pk(&leg.event)?, false));
+        }
     }
+    Ok(Instruction {
+        program_id: a.program,
+        accounts,
+        data: disc(name),
+    })
 }
+
+/// `settle_after_grace`: anyone, once every leg resolved and the claim
+/// grace period passed.
+pub fn settle_after_grace_ix(
+    a: &VaultAddresses,
+    legs: &[VaultLeg],
+) -> Result<Instruction, TxError> {
+    let mut accounts = vec![AccountMeta::new(a.basket, false)];
+    for leg in legs {
+        accounts.push(AccountMeta::new_readonly(pk(&leg.event)?, false));
+    }
+    Ok(Instruction {
+        program_id: a.program,
+        accounts,
+        data: disc("settle_after_grace"),
+    })
+}
+
+/// Panta `Event.resolved_at` (offset 72) for each leg; None while open.
+pub async fn resolutions(
+    solana: &SolanaCtx,
+    legs: &[VaultLeg],
+) -> Result<Vec<Option<i64>>, TxError> {
+    let keys = legs
+        .iter()
+        .map(|l| pk(&l.event))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(solana
+        .accounts_data(&keys)
+        .await?
+        .into_iter()
+        .map(|d| {
+            d.and_then(|d| {
+                d.get(72..80)
+                    .map(|b| i64::from_le_bytes(b.try_into().unwrap()))
+            })
+            .filter(|ts| *ts > 0)
+        })
+        .collect())
+}
+
+/// Seconds after the last leg resolves before anyone may settle (matches
+/// `SETTLE_GRACE_SECS` in the program).
+pub const SETTLE_GRACE_SECS: i64 = 72 * 3600;
 
 /// Find a Panta market's vault authority, USDC vault and the protocol fee
 /// account by reading one of its past `primary_order_usdc` transactions

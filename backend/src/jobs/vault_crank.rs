@@ -4,6 +4,9 @@
 //! `claim_leg` transaction, paid by the crank keypair (`CRANK_KEYPAIR`).
 //! The program sends the payout to the vault only, so the crank can never
 //! redirect funds. Idempotent: a claimed leg has a receipt and is skipped.
+//!
+//! Once every leg resolved and the grace period passed, the crank also sends
+//! the permissionless `settle_after_grace`, which opens redemption.
 
 use std::str::FromStr;
 
@@ -83,6 +86,55 @@ pub async fn run_once(state: AppState) -> anyhow::Result<()> {
     }
     if claimed > 0 {
         tracing::info!(claimed, "vault_crank: tick");
+    }
+
+    // Permissionless settle for baskets whose markets all resolved long enough ago.
+    let rows = client
+        .query(
+            "SELECT template_id FROM vault_baskets WHERE status IN ('live', 'closed')",
+            &[],
+        )
+        .await?;
+    let now = chrono::Utc::now().timestamp();
+    for r in rows {
+        let Some(basket) = queries::vault::get_basket(&client, r.get(0)).await? else {
+            continue;
+        };
+        let legs: Vec<VaultLeg> = serde_json::from_value(basket.legs_json.clone())?;
+        let resolved = vault::resolutions(&state.solana, &legs).await?;
+        let Some(last) = resolved
+            .iter()
+            .copied()
+            .collect::<Option<Vec<_>>>()
+            .and_then(|v| v.into_iter().max())
+        else {
+            continue; // some leg still open
+        };
+        if now < last + vault::SETTLE_GRACE_SECS {
+            continue;
+        }
+        let a = vault::addresses(&program, basket.onchain_id as u64, &usdc);
+        let built = state
+            .solana
+            .assemble(
+                &crank.pubkey(),
+                vec![vec![vault::settle_after_grace_ix(&a, &legs)?]],
+                None,
+                CLAIM_CU,
+            )
+            .await?;
+        state.solana.validate(&built.tx, &crank.pubkey(), None)?;
+        let signed = VersionedTransaction::try_new(built.tx.message.clone(), &[&crank])?;
+        let sig = state.solana.send(&signed).await?;
+        if state
+            .solana
+            .wait_for(&sig, std::time::Duration::from_secs(30))
+            .await
+            == crate::solana_tx::SigStatus::Confirmed
+        {
+            queries::vault::set_basket_status(&client, basket.template_id, "settled").await?;
+            tracing::info!(basket = %basket.slug, %sig, "vault_crank: settled");
+        }
     }
     Ok(())
 }

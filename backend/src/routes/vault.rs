@@ -271,10 +271,11 @@ async fn lifecycle(
     } else {
         "settle"
     };
+    let legs = legs_of(&row)?;
     let assembled = prepare(
         &state,
         &admin_pk,
-        vec![vault::admin_ix(ix_name, &a, &admin_pk)],
+        vec![vault::admin_ix(ix_name, &a, &admin_pk, &legs)?],
         ADMIN_CU,
     )
     .await?;

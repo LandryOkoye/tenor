@@ -25,6 +25,8 @@ const CLAIM_WIN_USDC: [u8; 8] = [0x2b, 0xa0, 0x6a, 0x33, 0xa7, 0x4c, 0x14, 0x1f]
 const EVENT_DISC: [u8; 8] = [0x7d, 0xc0, 0x7d, 0x9e, 0x09, 0x73, 0x98, 0xe9];
 const USER_POSITION_DISC: [u8; 8] = [0xfb, 0xf8, 0xd1, 0xf5, 0x53, 0xea, 0x11, 0x1b];
 
+/// `Event.resolved_at` (i64 unix seconds; 0 until the market resolves).
+const EVENT_RESOLVED_AT: usize = 72;
 /// `Event.yes_price` (u64, 1e9 = 1 USDC). NO price = 1e9 - YES price.
 const EVENT_YES_PRICE: usize = 152;
 /// `UserPosition` fields.
@@ -67,6 +69,15 @@ pub fn side_price(event: &AccountInfo, side: u8) -> Result<u128> {
     let yes = read_u64(&data, EVENT_YES_PRICE)? as u128;
     require!(yes <= PRICE_ONE, VaultError::PantaLayout);
     Ok(if side == 0 { yes } else { PRICE_ONE - yes })
+}
+
+/// When a Panta `Event` resolved (unix seconds), or None while it is open.
+pub fn resolved_at(event: &AccountInfo) -> Result<Option<i64>> {
+    require_keys_eq!(*event.owner, PROGRAM_ID, VaultError::PantaLayout);
+    let data = event.try_borrow_data()?;
+    require!(data.get(..8) == Some(&EVENT_DISC[..]), VaultError::PantaLayout);
+    let ts = read_u64(&data, EVENT_RESOLVED_AT)? as i64;
+    Ok((ts > 0).then_some(ts))
 }
 
 /// Shares of `side` held in a `UserPosition` (0 if it does not exist yet).

@@ -26,6 +26,10 @@ pub enum VaultError {
     Slippage,
     #[msg("nothing to mint or redeem")]
     Zero,
+    #[msg("every leg's market must be resolved")]
+    NotResolved,
+    #[msg("the claim grace period after resolution has not passed")]
+    GracePeriod,
     #[msg("arithmetic overflow")]
     Overflow,
 }

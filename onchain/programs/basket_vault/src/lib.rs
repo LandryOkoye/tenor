@@ -43,6 +43,11 @@ pub const MAX_FEE_BPS: u16 = 500;
 const POSITION_SPACE: usize = 202;
 const WIN_CLAIM_SPACE: usize = 121;
 
+/// After the last leg resolves, anyone may settle once this much time has
+/// passed — the window for the (permissionless) claim crank to collect
+/// every winning leg.
+pub const SETTLE_GRACE_SECS: i64 = 72 * 3600;
+
 pub const STATUS_OPEN: u8 = 0;
 pub const STATUS_CLOSED: u8 = 1;
 pub const STATUS_SETTLED: u8 = 2;
@@ -258,15 +263,21 @@ pub mod basket_vault {
         panta::claim(&shared, &accs, &rem[4], &[vault_seeds])
     }
 
-    /// Mark the basket settled once every leg resolved and winners were
-    /// claimed; enables `redeem`. Admin only (v1 trust assumption, ADR 0002).
-    pub fn settle(ctx: Context<AdminOnly>) -> Result<()> {
-        require!(
-            ctx.accounts.basket.status != STATUS_SETTLED,
-            VaultError::NotOpen
-        );
-        ctx.accounts.basket.status = STATUS_SETTLED;
-        Ok(())
+    /// Admin settles early (after claiming winners), but only once every
+    /// leg's market has resolved. `remaining_accounts`: each leg's Panta Event.
+    pub fn settle<'info>(ctx: Context<'info, AdminOnly<'info>>) -> Result<()> {
+        latest_resolution(&ctx.accounts.basket.legs, ctx.remaining_accounts)?;
+        mark_settled(&mut ctx.accounts.basket)
+    }
+
+    /// Anyone settles once every leg resolved AND the claim grace period
+    /// passed since the last resolution — no admin needed (ADR 0002).
+    /// `remaining_accounts`: each leg's Panta Event.
+    pub fn settle_after_grace<'info>(ctx: Context<'info, Permissionless<'info>>) -> Result<()> {
+        let last = latest_resolution(&ctx.accounts.basket.legs, ctx.remaining_accounts)?;
+        let now = Clock::get()?.unix_timestamp;
+        require!(now >= last + SETTLE_GRACE_SECS, VaultError::GracePeriod);
+        mark_settled(&mut ctx.accounts.basket)
     }
 
     /// Burn basket tokens for a pro-rata share of the vault's USDC.
@@ -371,6 +382,24 @@ pub fn validate_legs(legs: &[Leg]) -> Result<()> {
         );
     }
     require!(total == 10_000, VaultError::Weights);
+    Ok(())
+}
+
+/// Latest `resolved_at` across the legs; errors if any leg is unresolved.
+fn latest_resolution(legs: &[Leg], events: &[AccountInfo]) -> Result<i64> {
+    require!(events.len() == legs.len(), VaultError::LegAccounts);
+    let mut last = 0;
+    for (leg, event) in legs.iter().zip(events) {
+        require_keys_eq!(event.key(), leg.event, VaultError::LegAccounts);
+        let at = panta::resolved_at(event)?.ok_or(error!(VaultError::NotResolved))?;
+        last = last.max(at);
+    }
+    Ok(last)
+}
+
+fn mark_settled(basket: &mut Basket) -> Result<()> {
+    require!(basket.status != STATUS_SETTLED, VaultError::NotOpen);
+    basket.status = STATUS_SETTLED;
     Ok(())
 }
 
@@ -577,6 +606,16 @@ pub struct AdminOnly<'info> {
     #[account(
         mut,
         has_one = admin,
+        seeds = [b"basket", basket.id.to_le_bytes().as_ref()],
+        bump = basket.bump,
+    )]
+    pub basket: Box<Account<'info, Basket>>,
+}
+
+#[derive(Accounts)]
+pub struct Permissionless<'info> {
+    #[account(
+        mut,
         seeds = [b"basket", basket.id.to_le_bytes().as_ref()],
         bump = basket.bump,
     )]
