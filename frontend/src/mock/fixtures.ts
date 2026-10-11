@@ -163,7 +163,7 @@ export function trades(id: string): T.MarketTrade[] {
     const side: T.Side = i % 3 === 1 ? "no" : "yes";
     const price = side === "yes" ? y - i * 0.002 : 1 - y + i * 0.001;
     const amt = [12, 50, 5, 120, 20, 8, 250, 15, 40, 10, 75, 6, 30, 18][i];
-    return { signature: `5tX${i}q9Lm${id.length}Rz${i * 7}Ka8Wn3pYc2`, side, amount_usdc: String(amt * 1e6), shares: (amt / price).toFixed(2), price: price.toFixed(3), ts: iso(-(i * 23 + 4) * 60_000) };
+    return { signature: `5tX${i}q9Lm${id.length}Rz${i * 7}Ka8Wn3pYc2`, side, amount_usdc: String(amt * 1e6), shares: String(Math.round((amt * 1e6) / price)), price: price.toFixed(3), ts: iso(-(i * 23 + 4) * 60_000) };
   });
 }
 
@@ -173,9 +173,9 @@ export const portfolio: T.Portfolio = {
   total_cost_basis_usdc: "65000000",
   total_unrealized_pnl_usdc: "6840000",
   single_positions: [
-    { market_id: "mkt-sol-300", market_title: "SOL above $300 on 31 Dec", side: "yes", shares: "52.63", current_price: "0.380", value_usdc: "20000000", cost_basis_usdc: "17500000", unrealized_pnl_usdc: "2500000", resolved: false, won: null, claimable: false },
-    { market_id: "mkt-eurovision", market_title: "Eurovision 2026 winner is from the Nordics", side: "no", shares: "14.20", current_price: null, value_usdc: "14200000", cost_basis_usdc: "8000000", unrealized_pnl_usdc: "6200000", resolved: true, won: true, claimable: true },
-    { market_id: "mkt-us-open", market_title: "A first-time champion wins the US Open (men)", side: "yes", shares: "9.00", current_price: null, value_usdc: "0", cost_basis_usdc: "5000000", unrealized_pnl_usdc: "-5000000", resolved: true, won: false, claimable: false },
+    { market_id: "mkt-sol-300", market_title: "SOL above $300 on 31 Dec", side: "yes", shares: "52630000", current_price: "0.380", value_usdc: "20000000", cost_basis_usdc: "17500000", unrealized_pnl_usdc: "2500000", resolved: false, won: null, claimable: false },
+    { market_id: "mkt-eurovision", market_title: "Eurovision 2026 winner is from the Nordics", side: "no", shares: "14200000", current_price: null, value_usdc: "14200000", cost_basis_usdc: "8000000", unrealized_pnl_usdc: "6200000", resolved: true, won: true, claimable: true },
+    { market_id: "mkt-us-open", market_title: "A first-time champion wins the US Open (men)", side: "yes", shares: "9000000", current_price: null, value_usdc: "0", cost_basis_usdc: "5000000", unrealized_pnl_usdc: "-5000000", resolved: true, won: false, claimable: false },
   ],
   baskets: [
     {
@@ -190,9 +190,9 @@ export const portfolio: T.Portfolio = {
       legs_total: 3,
       modified_outside: false,
       legs: [
-        { order_id: "o1", market_id: "mkt-btc-150k", market_title: "BTC above $150K before year end", side: "yes", shares: "44.54", status: "filled", value_usdc: "10690000", claimable: false },
-        { order_id: "o2", market_id: "mkt-sol-300", market_title: "SOL above $300 on 31 Dec", side: "yes", shares: "20.97", status: "filled", value_usdc: "7970000", claimable: false },
-        { order_id: "o3", market_id: "mkt-eth-etf", market_title: "ETH ETF net inflows top $1B in November", side: "yes", shares: "27.21", status: "filled", value_usdc: "8980000", claimable: false },
+        { order_id: "o1", market_id: "mkt-btc-150k", market_title: "BTC above $150K before year end", side: "yes", shares: "44540000", status: "filled", value_usdc: "10690000", claimable: false },
+        { order_id: "o2", market_id: "mkt-sol-300", market_title: "SOL above $300 on 31 Dec", side: "yes", shares: "20970000", status: "filled", value_usdc: "7970000", claimable: false },
+        { order_id: "o3", market_id: "mkt-eth-etf", market_title: "ETH ETF net inflows top $1B in November", side: "yes", shares: "27210000", status: "filled", value_usdc: "8980000", claimable: false },
       ],
     },
     {
@@ -207,10 +207,14 @@ export const portfolio: T.Portfolio = {
       legs_total: 2,
       modified_outside: false,
       legs: [
-        { order_id: "o4", market_id: "mkt-grammy-afro", market_title: "An Afrobeats artist wins a major Grammy in 2027", side: "yes", shares: "11.10", status: "filled", value_usdc: "4880000", claimable: false },
-        { order_id: "o5", market_id: "mkt-box-office", market_title: "Summer box office tops $4B in the US", side: "yes", shares: "4.32", status: "resolved_win", value_usdc: "4320000", claimable: true },
+        { order_id: "o4", market_id: "mkt-grammy-afro", market_title: "An Afrobeats artist wins a major Grammy in 2027", side: "yes", shares: "11100000", status: "filled", value_usdc: "4880000", claimable: false },
+        { order_id: "o5", market_id: "mkt-box-office", market_title: "Summer box office tops $4B in the US", side: "yes", shares: "4320000", status: "resolved_win", value_usdc: "4320000", claimable: true },
       ],
     },
+  ],
+  vault_holdings: [
+    { template_id: "b1000000-0000-4000-8000-000000000002", template_slug: "crypto-year-end-rally", template_title: "Crypto year-end rally", status: "live", mint: "BsktMint1111111111111111111111111111111111", tokens: "48700000", value_usdc: "51340000", cost_basis_usdc: "50000000" },
+    { template_id: "b1000000-0000-4000-8000-000000000009", template_slug: "summer-sports-2026", template_title: "Summer sports 2026", status: "settled", mint: "BsktMint2222222222222222222222222222222222", tokens: "20000000", value_usdc: "26800000", cost_basis_usdc: "20000000" },
   ],
 };
 
@@ -243,3 +247,20 @@ export const scorecard = (creator: string): T.CreatorScorecard => ({
   total_volume_usdc: "812400000000",
   source: "app_analysis",
 });
+
+export function vaultFor(slug: string): T.VaultBasketView | null {
+  const b = baskets.find((x) => x.slug === slug);
+  if (!b || b.legs.length > 3 || slug !== "crypto-year-end-rally") return null;
+  return {
+    template_id: b.id,
+    slug: b.slug,
+    title: b.title,
+    status: "live",
+    mint: "BsktMint1111111111111111111111111111111111",
+    vault: "BsktVault111111111111111111111111111111111",
+    legs: b.legs.map((l) => ({ market_id: l.market_id, market_title: l.market_title, side: l.side, weight_bps: l.weight_bps })),
+    nav_usdc: "12840000000",
+    supply: "12185000000",
+    nav_per_token: "1.0538",
+  };
+}

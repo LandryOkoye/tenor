@@ -11,6 +11,7 @@ const purchases = new Map<string, { view: T.BasketPurchaseView; submittedAt: num
 const quotes = new Map<string, T.BasketQuote>();
 const orderQuotes = new Map<string, T.OrderQuote>();
 const orders = new Map<string, { view: T.OrderView; submittedAt: number }>();
+const vaultTxs = new Map<string, { view: T.VaultTxView; at: number }>();
 
 function summary(lines: string[], total: number, fee: number, panta: number, buy = true): T.TxSummary {
   return {
@@ -63,7 +64,7 @@ export async function mockRequest<R>(method: string, fullPath: string, body?: un
     const amt = Number(b.amount_usdc);
     const price = Number(b.side === "yes" ? m.yes_price : m.no_price) * 1.01;
     const panta = Math.round(amt * 0.02);
-    const quote: T.OrderQuote = { quote_id: crypto.randomUUID(), market_id: m.id, side: b.side as T.Side, amount_usdc: String(amt), expected_shares: ((amt - panta) / 1e6 / price).toFixed(2), avg_price: price.toFixed(3), panta_fee_usdc: String(panta), our_fee_usdc: "0", price_impact_bps: Math.round(amt / 1e6 / 4), expires_at: inSecs(90) };
+    const quote: T.OrderQuote = { quote_id: crypto.randomUUID(), market_id: m.id, side: b.side as T.Side, amount_usdc: String(amt), expected_shares: String(Math.round((amt - panta) / price)), avg_price: price.toFixed(3), panta_fee_usdc: String(panta), our_fee_usdc: "0", price_impact_bps: Math.round(amt / 1e6 / 4), expires_at: inSecs(90) };
     orderQuotes.set(quote.quote_id, quote);
     return r(quote);
   }
@@ -73,7 +74,7 @@ export async function mockRequest<R>(method: string, fullPath: string, body?: un
     const m = F.markets.find((x) => x.id === qt.market_id)!;
     const id = crypto.randomUUID();
     orders.set(id, { view: { order_id: id, market_id: m.id, market_title: m.title, side: qt.side, amount_usdc: qt.amount_usdc, expected_shares: qt.expected_shares, status: "built", tx_signature: null, error_code: null, created_at: inSecs(0), updated_at: inSecs(0) }, submittedAt: 0 });
-    return r({ order_id: id, transactions: ["bW9jaw=="], summary: summary([`Buy ~${qt.expected_shares} ${qt.side.toUpperCase()} shares of "${m.title}" for ${(Number(qt.amount_usdc) / 1e6).toFixed(2)} USDC`], Number(qt.amount_usdc), 0, Number(qt.panta_fee_usdc)), expires_at: inSecs(60) });
+    return r({ order_id: id, transactions: ["bW9jaw=="], summary: summary([`Buy ~${(Number(qt.expected_shares) / 1e6).toFixed(2)} ${qt.side.toUpperCase()} shares of "${m.title}" for ${(Number(qt.amount_usdc) / 1e6).toFixed(2)} USDC`], Number(qt.amount_usdc), 0, Number(qt.panta_fee_usdc)), expires_at: inSecs(60) });
   }
   if (seg[1] === "orders" && seg[2]) {
     const o = orders.get(seg[2]);
@@ -98,7 +99,7 @@ export async function mockRequest<R>(method: string, fullPath: string, body?: un
         legs: qt.legs.map((l, i) => ({ order_id: `${id}-${i}`, market_id: l.market_id, market_title: l.market_title, side: l.side, amount_usdc: l.allocation_usdc, shares: null, status: "pending", tx_signature: null, error_code: null, current_price: l.avg_price, claimable: false })),
       },
     });
-    const lines = [`Buy ${qt.legs.length} positions for ${(Number(qt.amount_usdc) / 1e6).toFixed(2)} USDC in one transaction:`, ...qt.legs.map((l) => `${l.side.toUpperCase()} · ${l.market_title}: ${(Number(l.allocation_usdc) / 1e6).toFixed(2)} USDC → ~${l.expected_shares} shares`)];
+    const lines = [`Buy ${qt.legs.length} positions for ${(Number(qt.amount_usdc) / 1e6).toFixed(2)} USDC in one transaction:`, ...qt.legs.map((l) => `${l.side.toUpperCase()} · ${l.market_title}: ${(Number(l.allocation_usdc) / 1e6).toFixed(2)} USDC → ~${(Number(l.expected_shares) / 1e6).toFixed(2)} shares`)];
     return r({ purchase_id: id, transactions: ["bW9jaw=="], summary: summary(lines, Number(qt.amount_usdc), Number(qt.our_fee_usdc), Number(qt.total_panta_fees_usdc)), expires_at: inSecs(60) });
   }
   if (seg[1] === "baskets" && seg[2] === "purchases" && seg[3]) {
@@ -110,7 +111,7 @@ export async function mockRequest<R>(method: string, fullPath: string, body?: un
     p.view = {
       ...p.view,
       status,
-      legs: p.view.legs.map((l, i) => ({ ...l, status: status === "filled" || el > 1600 + i * 500 ? "filled" : "pending", shares: status === "filled" ? (Number(l.amount_usdc) / 1e6 / Number(l.current_price)).toFixed(2) : null, tx_signature: status === "submitted" ? null : "5mockSig" })),
+      legs: p.view.legs.map((l, i) => ({ ...l, status: status === "filled" || el > 1600 + i * 500 ? "filled" : "pending", shares: status === "filled" ? String(Math.round(Number(l.amount_usdc) / Number(l.current_price))) : null, tx_signature: status === "submitted" ? null : "5mockSig" })),
     };
     return r(p.view);
   }
@@ -124,7 +125,7 @@ export async function mockRequest<R>(method: string, fullPath: string, body?: un
       const alloc = Math.floor((net * l.weight_bps) / 10_000);
       const panta = Math.round(alloc * 0.02);
       const price = Number(l.current_price) * 1.012;
-      return { market_id: l.market_id, market_title: l.market_title, side: l.side, weight_bps: l.weight_bps, allocation_usdc: String(alloc), expected_shares: ((alloc - panta) / 1e6 / price).toFixed(2), avg_price: price.toFixed(3), panta_fee_usdc: String(panta), price_impact_bps: Math.max(4, Math.round(alloc / 1e6 / 2)) };
+      return { market_id: l.market_id, market_title: l.market_title, side: l.side, weight_bps: l.weight_bps, allocation_usdc: String(alloc), expected_shares: String(Math.round((alloc - panta) / price)), avg_price: price.toFixed(3), panta_fee_usdc: String(panta), price_impact_bps: Math.max(4, Math.round(alloc / 1e6 / 2)) };
     });
     const quote: T.BasketQuote = { quote_id: crypto.randomUUID(), template_id: t.id, amount_usdc: String(amt), our_fee_usdc: String(fee), total_panta_fees_usdc: String(legs.reduce((s, l) => s + Number(l.panta_fee_usdc), 0)), legs, expires_at: inSecs(80) };
     quotes.set(quote.quote_id, quote);
@@ -172,6 +173,37 @@ export async function mockRequest<R>(method: string, fullPath: string, body?: un
   }
   if (seg[1] === "resolution" && seg[2] === "creators" && seg[3]) {
     return r({ scorecard: F.scorecard(seg[3]), markets: Object.values(F.resolutionRows).flat().filter((x) => x.creator === seg[3]) });
+  }
+
+  // tokenized baskets (vault)
+  if (seg[1] === "vault" && seg[2] === "baskets" && seg[4] === "deposit") {
+    const amt = Number(b.amount_usdc);
+    const tokens = Math.round((amt * 0.99) / 1.0538);
+    const id = crypto.randomUUID();
+    vaultTxs.set(id, { at: 0, view: { tx_id: id, kind: "deposit", status: "built", amount_usdc: String(amt), tokens: String(tokens), tx_signature: null, error_code: null, created_at: inSecs(0) } });
+    return r({ tx_id: id, transactions: ["bW9jaw=="], summary: summary([`Deposit ${(amt / 1e6).toFixed(2)} USDC into the basket vault and mint basket tokens at NAV`], amt, Math.round(amt * 0.0075), Math.round(amt * 0.02)), expected_tokens: String(tokens), min_tokens_out: String(Math.round(tokens * 0.985)) });
+  }
+  if (seg[1] === "vault" && seg[2] === "baskets" && seg[4] === "redeem") {
+    const id = crypto.randomUUID();
+    vaultTxs.set(id, { at: 0, view: { tx_id: id, kind: "redeem", status: "built", amount_usdc: null, tokens: String(b.tokens), tx_signature: null, error_code: null, created_at: inSecs(0) } });
+    return r({ tx_id: id, transactions: ["bW9jaw=="], summary: summary([`Redeem ${(Number(b.tokens) / 1e6).toFixed(2)} basket tokens for USDC at the final NAV`], 0, 0, 0, false), expected_tokens: null, min_tokens_out: null });
+  }
+  if (seg[1] === "vault" && seg[2] === "baskets" && seg[3]) {
+    const v = F.vaultFor(seg[3]);
+    if (!v) throw notFound();
+    return r(v);
+  }
+  if (seg[1] === "vault" && seg[2] === "txs" && seg[3]) {
+    const t = vaultTxs.get(seg[3]);
+    if (!t) throw notFound();
+    if (seg[4] === "submit") t.at = Date.now();
+    t.view = { ...t.view, status: Date.now() - t.at < 2500 ? "submitted" : "confirmed", tx_signature: "5mockSig" };
+    return r(t.view);
+  }
+  if (seg[1] === "admin" && seg[2] === "baskets" && ["tokenize", "vault-close", "vault-settle"].includes(seg[4])) {
+    const id = crypto.randomUUID();
+    vaultTxs.set(id, { at: 0, view: { tx_id: id, kind: seg[4], status: "built", amount_usdc: null, tokens: null, tx_signature: null, error_code: null, created_at: inSecs(0) } });
+    return r({ tx_id: id, transactions: ["bW9jaw=="], summary: summary([`Admin: ${seg[4]} basket vault (you pay any rent)`], 0, 0, 0, false), expected_tokens: null, min_tokens_out: null });
   }
 
   // admin
