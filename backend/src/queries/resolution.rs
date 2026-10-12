@@ -30,6 +30,7 @@ pub async fn markets_by_status(
     let predicate = match status {
         "resolving_soon" => {
             "m.phase <> 'resolved' AND m.resolved = false
+                             AND m.resolve_time >= now()
                              AND m.resolve_time <= now() + interval '48 hours'"
         }
         "resolved" => "m.resolved = true",
@@ -84,6 +85,8 @@ pub async fn markets_by_status(
 
 /// Full resolution detail for one market (rules, oracle, timeline).
 pub struct MarketResolution {
+    /// Trading opened (Panta `startTime`).
+    pub start_time: Option<DateTime<Utc>>,
     pub market_id: String,
     pub title: String,
     pub rules_text: Option<String>,
@@ -104,7 +107,8 @@ pub async fn market_resolution(
     let row = client
         .query_opt(
             "SELECT id, title, rules_text, oracle, creator, close_time, resolve_time,
-                    resolved_at, outcome
+                    resolved_at, outcome,
+                    to_timestamp((raw_json->>'startTime')::bigint) AS start_time
              FROM markets WHERE id = $1",
             &[&market_id],
         )
@@ -134,6 +138,7 @@ pub async fn market_resolution(
         resolve_time: row.get(6),
         resolved_at: row.get(7),
         outcome: row.get(8),
+        start_time: row.get(9),
         timeline,
     }))
 }
@@ -164,7 +169,7 @@ pub async fn creator_scorecard(
                     AND (SELECT s.yes_price::float8 FROM market_snapshots s
                          WHERE s.market_id = m.id AND s.ts <= m.resolved_at
                          ORDER BY s.ts DESC LIMIT 1) >= 0.90)  AS surprises,
-                COALESCE(sum(m.volume), 0)                     AS total_volume
+                COALESCE(sum(m.volume), 0)::BIGINT             AS total_volume
              FROM markets m
              WHERE m.creator = $1",
             &[&creator],

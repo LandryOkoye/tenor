@@ -86,6 +86,15 @@ pub async fn detail(
     // entries from catalog timestamps so even never-synced markets have a
     // basic story ("trading started", "expected resolution").
     let mut timeline: Vec<TimelineEvent> = Vec::new();
+    if let Some(t) = m.start_time {
+        timeline.push(TimelineEvent {
+            ts: t,
+            event_type: "trading_started".into(),
+            label: "Trading opened".into(),
+            explorer_url: None,
+            source: DataSource::Panta,
+        });
+    }
     if let Some(t) = m.close_time {
         timeline.push(TimelineEvent {
             ts: t,
@@ -99,12 +108,21 @@ pub async fn detail(
         timeline.push(TimelineEvent {
             ts: t,
             event_type: "resolution_expected".into(),
-            label: "Resolution expected".into(),
+            label: if m.resolved_at.is_some_and(|r| r > t) {
+                "Resolution was due".into()
+            } else {
+                "Resolution expected".into()
+            },
             explorer_url: None,
             source: DataSource::Panta,
         });
     }
     for (ts, event_type, payload) in &m.timeline {
+        // Panta's resolution timestamp is shown below; our own record of
+        // when we first saw it resolved would only duplicate it.
+        if event_type == "resolved" && m.resolved_at.is_some() {
+            continue;
+        }
         // Events with a timestamp BEFORE the synthetic ones stay in order:
         // we sort the whole timeline below.
         timeline.push(TimelineEvent {
@@ -203,13 +221,19 @@ pub async fn creator(
 /// Human-readable label for a recorded event (used in the timeline UI).
 fn humanize_event(event_type: &str, payload: &serde_json::Value) -> String {
     match event_type {
-        "created" => "Market first seen in the catalog".to_string(),
+        "created" => "First tracked by Tenor".to_string(),
         "status_change" => {
-            let to = payload
-                .get("to")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-            format!("Market state changed to {to}")
+            let to = &payload["to"];
+            match (to["phase"].as_str(), to["resolved"].as_bool()) {
+                (_, Some(true)) | (Some("resolved"), _) => {
+                    "Panta marked the market resolved".into()
+                }
+                (Some("secondary"), _) => "Graduated to secondary trading".into(),
+                (Some("primary"), _) => "Primary trading open".into(),
+                (Some("cancelled"), _) => "Market cancelled".into(),
+                (Some(other), _) => format!("Market moved to the {other} phase"),
+                (None, _) => "Market status changed".into(),
+            }
         }
         "resolved" => format!(
             "Resolved: {}",
