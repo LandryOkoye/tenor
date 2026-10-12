@@ -101,7 +101,7 @@ export default function PortfolioPage() {
         ]}
       />
 
-      <div className="mt-6" role="tabpanel">
+      <div className="mt-6">
         {tab === "baskets" &&
           (p.baskets.length + p.vault_holdings.length === 0 ? (
             <EmptyState icon={<Basket size={24} />} title="No baskets yet" body="Back a whole theme in one signature." action={<ButtonLink to="/baskets">Explore baskets</ButtonLink>} />

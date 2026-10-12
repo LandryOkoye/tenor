@@ -127,7 +127,7 @@ function Hero() {
       <ul className="mt-7 flex flex-wrap gap-2 sm:hidden" aria-label="Highlights">
         <li className="rounded-full bg-yes-soft px-3 py-1.5 font-mono text-xs font-bold text-yes">YES 62¢ ▲4</li>
         <li className="inline-flex items-center gap-1.5 rounded-full bg-surface px-3 py-1.5 text-xs font-medium shadow-soft">
-          <span className="size-1.5 rounded-full bg-accent" aria-hidden="true" /> Live P&L
+          <span className="size-1.5 rounded-full bg-accent" aria-hidden="true" /> Real-time P&L
         </li>
         <li className="rounded-full bg-surface px-3 py-1.5 text-xs font-medium shadow-soft">Verifiable resolution</li>
       </ul>
@@ -176,7 +176,7 @@ function Introducing() {
           <div className="max-w-sm">
             <p className="font-medium">Introducing Tenor</p>
             <p className="mt-1.5 text-muted">
-              Prices read as probabilities. Positions sit in a portfolio with cost basis and live P&L. Every market shows its rules, sources and resolution timeline. And it all settles in USDC, straight from your own wallet.
+              Prices read as probabilities. Positions sit in a portfolio with cost basis and real-time P&L. Every market shows its rules, sources and resolution timeline. And it all settles in USDC, straight from your own wallet.
             </p>
             <Link to="/learn" className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium underline-offset-4 hover:underline">
               How prediction markets work <ArrowUpRight size={14} aria-hidden="true" />
@@ -242,7 +242,7 @@ function Coverage() {
   return (
     <section className="mx-auto max-w-7xl px-4 pb-28 sm:px-8 lg:pb-36">
       <p className="font-medium">Markets on what moves the world</p>
-      <p className="text-muted">Live markets from Panta on Solana, settled in USDC. Open worldwide, wherever prediction markets are legal.</p>
+      <p className="text-muted">Open markets from Panta on Solana, settled in USDC. Open worldwide, wherever prediction markets are legal.</p>
       <ul className="mt-10 grid grid-cols-2 gap-x-6 gap-y-8 sm:grid-cols-3 lg:grid-cols-6">
         {items.map(({ icon: I, label }) => (
           <li key={label} className="flex items-center gap-2.5 text-ink/70">
@@ -271,7 +271,7 @@ function OneApp() {
       </div>
       <div className="relative mt-14 grid gap-5 md:grid-cols-3">
         <Reveal>
-          <FeatureCard title="Trade any market" body="Prices shown as cents and chance, with the rules, a price chart and the live trade tape on every market.">
+          <FeatureCard title="Trade any market" body="Prices shown as cents and chance, with the rules, a price chart and the recent trade tape on every market.">
             <div className="rounded-xl bg-surface p-4 shadow-soft">
               <p className="text-sm font-medium">Fed cuts rates in December</p>
               <div className="mt-3 grid grid-cols-2 gap-2">
@@ -363,9 +363,9 @@ function FeatureRows() {
         <Row
           title="Track it like a portfolio."
           lead="Cost basis, value and P&L in one place"
-          body="Every position and basket in your wallet, valued at live prices. When a market resolves your way, claim it in one tap."
+          body="Every position and basket in your wallet, valued at current prices. When a market resolves your way, claim it in one tap."
           stat="P&L"
-          statLabel="live across every position"
+          statLabel="across every position"
           art={
             <div className="absolute left-6 top-8 space-y-2.5 sm:left-10 sm:top-10">
               {[
@@ -449,7 +449,7 @@ function ThemesRail() {
           </p>
           <h2 className="mt-2 text-[clamp(2.4rem,6vw,4.75rem)] font-semibold leading-none tracking-[-0.045em]">Have a thesis? Buy it whole.</h2>
           <p className="mt-4 text-muted">Curated bundles of related markets, bought in one signature. Diversified like an index, and each leg pays out on its own.</p>
-          {!live && <p className="mt-3 label-mono text-faint">Examples · live baskets appear here once published</p>}
+          {!live && <p className="mt-3 label-mono text-faint">Examples · baskets appear here once published</p>}
         </div>
         <ButtonLink to="/baskets" variant="secondary">
           All baskets <ArrowRight size={16} aria-hidden="true" />

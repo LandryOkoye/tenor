@@ -131,7 +131,7 @@ function Curator() {
     <div>
       <p className="label-mono text-muted">Admin</p>
       <h1 className="mt-2 text-4xl font-semibold tracking-[-0.04em]">Curate a basket</h1>
-      <p className="mt-2 max-w-xl text-muted">Pick 2–{MAX_LEGS} live markets, choose a side and weight for each, write the thesis, then publish. The server re-checks liquidity and close times on publish.</p>
+      <p className="mt-2 max-w-xl text-muted">Pick 2–{MAX_LEGS} open markets, choose a side and weight for each, write the thesis, then publish. The server re-checks liquidity and close times on publish.</p>
 
       <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_1.1fr]">
         <Card className="p-5 sm:p-6">

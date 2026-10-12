@@ -172,7 +172,7 @@ export function BasketBuyPanel({ basket }: { basket: BasketTemplateDetail }) {
           </Button>
         ) : (
           <Button size="lg" variant="accent" className="w-full" onClick={flow.start} loading={flow.phase === "building"}>
-            Buy basket · {formatUsdc(quote.amount_usdc)}
+            Review buy · Basket · {formatUsdc(quote.amount_usdc)}
           </Button>
         )}
       </div>
@@ -190,6 +190,7 @@ export function BasketBuyPanel({ basket }: { basket: BasketTemplateDetail }) {
         txCount={flow.built?.transactions.length ?? 1}
         signing={flow.phase === "signing"}
         title="Review basket"
+        signLabel={quote ? `Buy basket · ${formatUsdc(quote.amount_usdc)}` : undefined}
         error={flow.error}
       />
     </div>
@@ -215,7 +216,7 @@ export function PurchaseProgress({ p, onDone }: { p: BasketPurchaseView; onDone:
     <div className="rounded-[var(--radius-card)] border border-line bg-surface p-5 sm:p-6" aria-live="polite">
       <p className="label-mono text-muted">{done ? (failed ? "Purchase failed" : partial ? "Partly filled" : "Purchase complete") : "Confirming on Solana"}</p>
       <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-        {failed ? "Nothing was bought." : partial ? `${filled} of ${p.legs.length} legs filled` : done ? "Your basket is live." : "Buying your legs…"}
+        {failed ? "Nothing was bought." : partial ? `${filled} of ${p.legs.length} legs filled` : done ? "All legs filled." : "Buying your legs…"}
       </h2>
       <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-sunk">
         <div className={cn("h-full rounded-full transition-[width] duration-500", failed ? "bg-no" : "bg-accent")} style={{ width: `${(filled / p.legs.length) * 100}%` }} />

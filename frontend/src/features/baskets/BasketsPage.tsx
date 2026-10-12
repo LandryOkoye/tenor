@@ -67,7 +67,7 @@ export default function BasketsPage() {
         ) : isLoading ? (
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">{Array.from({ length: 3 }, (_, i) => <BasketCardSkeleton key={i} />)}</div>
         ) : list.length === 0 ? (
-          <EmptyState icon={<Basket size={24} />} title="No baskets published yet" body="New baskets are curated from live markets. Check back soon, or browse single markets meanwhile." />
+          <EmptyState icon={<Basket size={24} />} title="No baskets published yet" body="New baskets are curated from open markets. Check back soon, or browse single markets meanwhile." />
         ) : (
           <ul className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {list.map((b) => (

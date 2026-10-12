@@ -164,7 +164,7 @@ export function BuyPanel({ market, initialSide = "yes", requestedSide }: { marke
           </Button>
         ) : (
           <Button size="lg" variant={side === "yes" ? "yes" : "no"} className="w-full" onClick={flow.start} loading={flow.phase === "building"}>
-            Buy {side.toUpperCase()} · {formatUsdc(quote.amount_usdc)}
+            Review buy · {side.toUpperCase()} · {formatUsdc(quote.amount_usdc)}
           </Button>
         )}
       </div>
@@ -184,6 +184,8 @@ export function BuyPanel({ market, initialSide = "yes", requestedSide }: { marke
         expiresAt={flow.built?.expires_at ?? null}
         txCount={flow.built?.transactions.length ?? 1}
         signing={flow.phase === "signing"}
+        title="Review buy"
+        signLabel={quote ? `Buy ${side.toUpperCase()} · ${formatUsdc(quote.amount_usdc)}` : undefined}
         error={flow.error}
       />
     </div>

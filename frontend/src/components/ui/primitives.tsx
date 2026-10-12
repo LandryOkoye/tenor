@@ -125,12 +125,12 @@ export function SectionHeading({ eyebrow, title, action, className }: { eyebrow?
 
 export function Tabs<T extends string>({ value, onChange, items, className, label }: { value: T; onChange: (v: T) => void; items: Array<{ value: T; label: ReactNode }>; className?: string; label: string }) {
   return (
-    <div role="tablist" aria-label={label} className={cn("no-scrollbar flex gap-1 overflow-x-auto rounded-full border border-line bg-surface p-1", className)}>
+    <div role="group" aria-label={label} className={cn("no-scrollbar flex gap-1 overflow-x-auto rounded-full border border-line bg-surface p-1", className)}>
       {items.map((it) => (
         <button
           key={it.value}
-          role="tab"
-          aria-selected={value === it.value}
+          type="button"
+          aria-pressed={value === it.value}
           onClick={() => onChange(it.value)}
           className={cn(
             "h-9 shrink-0 flex-1 whitespace-nowrap rounded-full px-3 text-[13px] font-medium transition-colors sm:flex-none sm:px-4 sm:text-sm",

@@ -28,9 +28,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const current = valid(session, wallet.address) ? session : null;
 
-  useEffect(() => {
-    setAuthToken(current?.token ?? null);
-  }, [current?.token]);
+  // Attach during render, not in an effect: child effects run before parent
+  // effects, so authed queries would otherwise fire without the header,
+  // get a 401 and wipe the restored session.
+  setAuthToken(current?.token ?? null);
 
   const signOut = useCallback(() => {
     setSession(null);

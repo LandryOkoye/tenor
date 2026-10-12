@@ -20,6 +20,7 @@ export function SignReview({
   txCount,
   signing,
   title = "Review and sign",
+  signLabel = "Approve in wallet",
   error,
   extra,
 }: {
@@ -31,6 +32,8 @@ export function SignReview({
   txCount: number;
   signing: boolean;
   title?: string;
+  /** Confirm button text; matches the action the panel button previewed. */
+  signLabel?: string;
   error?: string | null;
   /** Extra disclosure rows (e.g. expected basket tokens) shown above the fees. */
   extra?: ReactNode;
@@ -85,7 +88,7 @@ export function SignReview({
           </div>
           <Button size="lg" className="w-full" onClick={onSign} loading={signing} disabled={expired}>
             <LockSimple size={18} weight="bold" aria-hidden="true" />
-            {signing ? "Waiting for your wallet…" : "Sign in wallet"}
+            {signing ? "Waiting for your wallet…" : signLabel}
           </Button>
         </div>
       )}
