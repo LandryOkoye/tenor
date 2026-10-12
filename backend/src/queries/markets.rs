@@ -43,7 +43,7 @@ pub async fn upsert_market(
                 resolve_time = EXCLUDED.resolve_time,
                 resolved_at = EXCLUDED.resolved_at,
                 outcome = EXCLUDED.outcome,
-                creator = EXCLUDED.creator,
+                creator = COALESCE(EXCLUDED.creator, markets.creator),
                 oracle = EXCLUDED.oracle,
                 rules_text = EXCLUDED.rules_text,
                 image_url = EXCLUDED.image_url,
@@ -63,8 +63,17 @@ pub async fn upsert_market(
                 &m.status,
                 &unix_to_ts(m.end_time),
                 &unix_to_ts(m.resolution_time),
-                // "resolved_at": best available signal is resolution_time when resolved.
-                &unix_to_ts(if m.resolved { m.resolution_time } else { None }),
+                // resolved_at: Panta's own timestamp when given; otherwise the
+                // expected resolution time, never later than now (a resolved
+                // market cannot have resolved in the future).
+                &unix_to_ts(if m.resolved {
+                    m.resolved_at.or_else(|| {
+                        m.resolution_time
+                            .map(|t| t.min(chrono::Utc::now().timestamp()))
+                    })
+                } else {
+                    None
+                }),
                 &m.status.clone().map(|_| {
                     // outcome: derive yes/no from filled prices once resolved
                     match (&m.yes_price, m.resolved) {
@@ -73,10 +82,10 @@ pub async fn upsert_market(
                         _ => None,
                     }
                 }),
-                // Panta catalog rows do not expose creator/oracle yet (spike S5);
-                // we record what we have and enrich later.
-                &Option::<String>::None,
-                &Option::<String>::None,
+                // Creator comes from `creatorAddress` (detail rows); list rows may
+                // omit it, so keep a known creator rather than erasing it.
+                &m.creator_address,
+                &Option::<String>::None, // oracle: not exposed by Panta's API
                 &m.description,
                 &m.images.first().cloned(),
                 &serde_json::to_value(m).unwrap_or(serde_json::Value::Null),

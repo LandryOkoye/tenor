@@ -98,6 +98,21 @@ pub struct MarketRow {
     pub resolution_time: Option<i64>, // unix seconds
     #[serde(default)]
     pub region: Option<String>,
+    /// Wallet that created the market (`creatorAddress`; detail rows).
+    #[serde(
+        default,
+        rename = "creatorAddress",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub creator_address: Option<String>,
+    /// When the market actually resolved, if Panta reports it (unix or ISO).
+    #[serde(
+        default,
+        rename = "resolvedAt",
+        deserialize_with = "unix_or_iso",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub resolved_at: Option<i64>,
     #[serde(default)]
     pub resolved: bool,
     #[serde(default)]

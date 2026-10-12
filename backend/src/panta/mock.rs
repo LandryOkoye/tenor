@@ -65,6 +65,10 @@ pub struct MockPanta {
     counter: AtomicU64, // monotonic id source for qt_…/ord_…
 }
 
+/// The instant the fixture timestamps were authored around
+/// (2026-10-12 00:00 UTC); see `with_quote_ttl`.
+const FIXTURE_ANCHOR: i64 = 1_791_763_200;
+
 impl MockPanta {
     /// Load fixture markets + categories.
     pub fn new() -> Self {
@@ -73,8 +77,25 @@ impl MockPanta {
 
     /// Test hook: make quotes expire after `ttl` so expiry handling is testable.
     pub fn with_quote_ttl(ttl: Duration) -> Self {
-        let markets: Vec<MarketRow> = serde_json::from_str(include_str!("fixtures/markets.json"))
-            .expect("fixture markets.json is valid");
+        let mut markets: Vec<MarketRow> =
+            serde_json::from_str(include_str!("fixtures/markets.json"))
+                .expect("fixture markets.json is valid");
+        // Fixture times are authored around FIXTURE_ANCHOR; shift them to
+        // "now" so resolved markets stay in the past, "resolving soon" stays
+        // soon and "delayed" stays overdue whenever the demo runs.
+        let shift = Utc::now().timestamp() - FIXTURE_ANCHOR;
+        for m in &mut markets {
+            for t in [
+                &mut m.start_time,
+                &mut m.end_time,
+                &mut m.resolution_time,
+                &mut m.resolved_at,
+            ] {
+                if let Some(v) = t.as_mut() {
+                    *v += shift;
+                }
+            }
+        }
         let cats: CategoriesResponse =
             serde_json::from_str(include_str!("fixtures/categories.json"))
                 .expect("fixture categories.json is valid");
@@ -752,7 +773,7 @@ mod tests {
             .await
             .expect("page 2");
         assert_eq!(page2.items.len(), 2);
-        // All six fixtures must be reachable across pages, no duplicates.
+        // More fixtures remain beyond the first pages.
         assert!(page1.next_cursor.is_some());
     }
 }
