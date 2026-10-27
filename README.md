@@ -1,7 +1,5 @@
 # Tenor — prediction-market baskets on Panta
 
-> Built for the Crypto World Fair (Colosseum) — Panta side track.
-
 Prediction markets today are single bets or all-or-nothing parlays. **Tenor sells baskets**: a
 curated bundle of Panta markets around one view ("AFCON 2027: Super Eagles", "Naija Macro Mix")
 bought in **one signature**. Unlike a parlay, **every leg pays on its own**, so being partly
