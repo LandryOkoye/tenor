@@ -28,9 +28,14 @@ const SESSION_TTL_HOURS: i64 = 24;
 
 /// The message a wallet must sign. Plain, honest, and nonce-bound so it can
 /// never be replayed from another session.
+///
+/// Deliberately NOT shaped like a SIWS message ("<domain> wants you to sign
+/// in…"): Phantom parses that header strictly and rejects the request as
+/// "invalid formatting" unless every SIWS field and a real domain are present.
 pub fn sign_in_message(wallet: &str, nonce: &str) -> String {
     format!(
-        "Tenor wants you to sign in with your Solana account:\n{wallet}\n\n\
+        "Sign in to Tenor\n\n\
+         Wallet: {wallet}\n\n\
          This request will not trigger any transaction or cost any fees.\n\n\
          Nonce: {nonce}"
     )

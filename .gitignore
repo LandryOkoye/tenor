@@ -24,3 +24,6 @@ backend/bindings/
 
 # TypeScript incremental build info
 *.tsbuildinfo
+
+# Film capture: throwaway unfunded test keypair
+video/capture/.test-wallet.json
